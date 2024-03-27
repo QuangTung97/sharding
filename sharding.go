@@ -3,7 +3,6 @@ package sharding
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 
 	"github.com/QuangTung97/zk"
 	"github.com/QuangTung97/zk/concurrency"
@@ -12,12 +11,19 @@ import (
 
 type Sharding struct {
 	parentPath string
+	nodeID     string
 
 	cur *curator.Curator
 
-	lockNodeCreated bool
+	state *sessionState
 
 	lockBegin func(sess *curator.Session)
+}
+
+type sessionState struct {
+	lockNodeCreated bool
+	nodesCreated    bool
+	leaderStarted   bool
 }
 
 func NewNodeID() string {
@@ -32,6 +38,7 @@ func NewNodeID() string {
 func New(parentPath string, nodeID string) *Sharding {
 	s := &Sharding{
 		parentPath: parentPath,
+		nodeID:     nodeID,
 	}
 
 	lock := concurrency.NewLock(s.getLockPath(), nodeID)
@@ -49,41 +56,54 @@ func (s *Sharding) getLockPath() string {
 	return s.parentPath + "/lock"
 }
 
+func (s *Sharding) getNodesPath() string {
+	return s.parentPath + "/nodes"
+}
+
 func (s *Sharding) createContainerNodes(sess *curator.Session, next func(sess *curator.Session)) {
+	s.state = &sessionState{}
 	s.lockBegin = next
 	s.createInitNodes(sess)
 }
 
 func (s *Sharding) createCompleted(sess *curator.Session) {
-	s.lockBegin(sess)
-}
-
-func (s *Sharding) handleCreateLockPath(sess *curator.Session) func(resp zk.GetResponse, err error) {
-	return func(resp zk.GetResponse, err error) {
-		if err != nil {
-			if errors.Is(err, zk.ErrNoNode) {
-				s.createLockNode(sess)
-				return
-			}
-			panic(err)
+	if s.state.lockNodeCreated && s.state.nodesCreated {
+		if s.state.leaderStarted {
+			panic("Leader already started")
 		}
-		s.lockNodeCreated = true
-		s.createCompleted(sess)
+		s.state.leaderStarted = true
+		s.lockBegin(sess)
 	}
 }
 
 func (s *Sharding) createInitNodes(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
-		client.Get(s.getLockPath(), s.handleCreateLockPath(sess))
+		client.Create(s.getLockPath(), nil, 0, func(resp zk.CreateResponse, err error) {
+			s.state.lockNodeCreated = true
+			s.createCompleted(sess)
+		})
+		client.Create(s.getNodesPath(), nil, 0, func(resp zk.CreateResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
+			s.createEphemeralNode(sess)
+		})
 	})
 }
 
-func (s *Sharding) createLockNode(sess *curator.Session) {
+func (s *Sharding) createEphemeralNode(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
-		client.Create(s.getLockPath(), nil, 0, func(resp zk.CreateResponse, err error) {
-			s.lockNodeCreated = true
-			s.createCompleted(sess)
-		})
+		client.Create(s.getNodesPath()+"/"+s.nodeID,
+			[]byte("address01"),
+			zk.FlagEphemeral,
+			func(resp zk.CreateResponse, err error) {
+				if err != nil {
+					panic(err)
+				}
+				s.state.nodesCreated = true
+				s.createCompleted(sess)
+			},
+		)
 	})
 }
 

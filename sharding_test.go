@@ -53,7 +53,8 @@ func TestSharding_Begin(t *testing.T) {
 	startSharding(store, client1, "node01")
 
 	store.Begin(client1)
-	store.GetApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
 	store.CreateApply(client1)
 
 	// Lock Start
