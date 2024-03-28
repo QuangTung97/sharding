@@ -40,6 +40,8 @@ type sessionState struct {
 
 	getAssignsRemain         int
 	listActiveNodesCompleted bool
+
+	isListingAssigns bool
 }
 
 func NewNodeID() string {
@@ -131,8 +133,11 @@ func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.
 func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string) {
 	sess.Run(func(client curator.Client) {
 		client.Get(s.getAssignsPath()+"/"+nodeID, func(resp zk.GetResponse, err error) {
-			// TODO Check Connection Error
 			if err != nil {
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(s.listAssignNodes)
+					return
+				}
 				panic(err)
 			}
 
@@ -152,12 +157,21 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string) {
 
 func (s *Sharding) startHandleNodeChanges(sess *curator.Session) {
 	if s.state.getAssignsRemain == 0 && s.state.listActiveNodesCompleted {
-		s.handleNodesChanged(sess)
+		sess.Run(func(client curator.Client) {
+			s.handleNodesChanged(sess)
+		})
 	}
 }
 
 func (s *Sharding) listAssignNodes(sess *curator.Session) {
+	if s.state.isListingAssigns {
+		return
+	}
+	s.state.isListingAssigns = true
+
 	sessMustChildren(sess, s.getAssignsPath(), func(resp zk.ChildrenResponse) {
+		s.state.isListingAssigns = false
+
 		s.state.getAssignsRemain = len(resp.Children)
 		for _, nodeID := range resp.Children {
 			s.getAssignNodeData(sess, nodeID)

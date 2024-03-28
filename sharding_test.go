@@ -364,3 +364,104 @@ func TestSharding_List_Assign_Nodes_Error(t *testing.T) {
 	assert.Equal(t, "node01", children[0].Name)
 	assert.Equal(t, `{"shards":[0,1,2,3,4,5,6,7]}`, string(children[0].Data))
 }
+
+func TestSharding_Get_Assign_Node_Data_Conn_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+	initContainerNodes(store, client1)
+
+	lockGranted(store, client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	store.SessionExpired(client1)
+	store.ChildrenApply(client1)
+
+	// Start Client2
+	startSharding(store, client2, "node02")
+	store.Begin(client2)
+	initContainerNodes(store, client2)
+
+	lockGranted(store, client2)
+
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+
+	store.ConnError(client2)
+	store.Retry(client2)
+	store.ChildrenApply(client2)
+	store.GetApply(client2)
+
+	store.CreateApply(client2)
+	store.DeleteApply(client2)
+
+	children := store.Root.Children[0].Children[2].Children
+	assert.Equal(t, 1, len(children))
+	assert.Equal(t, "node02", children[0].Name)
+	assert.Equal(t, `{"shards":[0,1,2,3,4,5,6,7]}`, string(children[0].Data))
+}
+
+func TestSharding_Get_Assign_Data_Of_Two_Nodes__Conn_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	startSharding(store, client2, "node02")
+	startSharding(store, client3, "node03")
+
+	store.Begin(client1)
+	store.Begin(client2)
+	store.Begin(client3)
+
+	initContainerNodes(store, client1)
+	initContainerNodes(store, client2)
+	initContainerNodes(store, client3)
+
+	lockGranted(store, client1)
+	lockBlocked(store, client2)
+	lockBlocked(store, client3)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	// session expired
+	store.SessionExpired(client1)
+	store.ChildrenApply(client1)
+
+	// Client 2 Granted
+	store.ChildrenApply(client2)
+
+	// Get children of nodes and assigns
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+
+	store.ConnError(client2)
+	store.Retry(client2)
+
+	store.ChildrenApply(client2)
+	store.GetApply(client2)
+	store.GetApply(client2)
+	store.GetApply(client2)
+
+	store.SetApply(client2)
+	store.SetApply(client2)
+	store.DeleteApply(client2)
+
+	assert.Equal(t, []string{}, store.PendingCalls(client2))
+
+	children := store.Root.Children[0].Children[2].Children
+	assert.Equal(t, 2, len(children))
+
+	assert.Equal(t, "node02", children[0].Name)
+	assert.Equal(t, `{"shards":[3,4,5,0]}`, string(children[0].Data))
+
+	assert.Equal(t, "node03", children[1].Name)
+	assert.Equal(t, `{"shards":[6,7,1,2]}`, string(children[1].Data))
+}
