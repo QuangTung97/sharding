@@ -337,3 +337,30 @@ func TestSharding_Create_Ephemeral_Node_Connection_Error(t *testing.T) {
 	assert.Equal(t, 1, len(children))
 	assert.Equal(t, "node01", children[0].Name)
 }
+
+func TestSharding_List_Assign_Nodes_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	lockGranted(store, client1)
+
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.CreateApply(client1)
+
+	children := store.Root.Children[0].Children[2].Children
+	assert.Equal(t, 1, len(children))
+	assert.Equal(t, "node01", children[0].Name)
+	assert.Equal(t, `{"shards":[0,1,2,3,4,5,6,7]}`, string(children[0].Data))
+}
