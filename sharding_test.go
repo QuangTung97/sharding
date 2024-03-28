@@ -570,3 +570,37 @@ func TestSharding__Set_Conn_Error(t *testing.T) {
 	assert.Equal(t, "node03", children[1].Name)
 	assert.Equal(t, `{"shards":[6,7,1,2]}`, string(children[1].Data))
 }
+
+func TestSharding__Client1_Created__Then_Client2_Added(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+
+	initContainerNodes(store, client1)
+	lockGranted(store, client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	// Client 2 Started
+	startSharding(store, client2, "node02")
+	store.Begin(client2)
+
+	initContainerNodes(store, client2)
+	lockBlocked(store, client2)
+
+	store.ChildrenApply(client1)
+	store.SetApply(client1)
+	store.CreateApply(client1)
+
+	children := store.Root.Children[0].Children[2].Children
+	assert.Equal(t, 2, len(children))
+
+	assert.Equal(t, "node01", children[0].Name)
+	assert.Equal(t, `{"shards":[0,1,2,3]}`, string(children[0].Data))
+
+	assert.Equal(t, "node02", children[1].Name)
+	assert.Equal(t, `{"shards":[4,5,6,7]}`, string(children[1].Data))
+}

@@ -266,6 +266,11 @@ func (s *Sharding) updateIfChanged(
 ) {
 	current := slices.Clone(s.state.currentAssignMap[nodeID].shards)
 	if len(current) > expectLen {
+		for _, id := range current[expectLen:] {
+			freeShards[id] = struct{}{}
+		}
+		current = current[:expectLen]
+		s.upsertAssigns(sess, nodeID, current)
 		return
 	}
 	if len(current) < expectLen {
