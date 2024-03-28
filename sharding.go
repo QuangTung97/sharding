@@ -100,45 +100,59 @@ func (s *Sharding) createCompleted(sess *curator.Session) {
 }
 
 func (s *Sharding) createInitNodes(sess *curator.Session) {
+	s.createLockNode(sess)
+	s.createNodesPath(sess)
+	s.createAssignsNode(sess)
+}
+
+func (s *Sharding) createLockNode(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
 		client.Create(s.getLockPath(), nil, 0, func(resp zk.CreateResponse, err error) {
-			if err != nil {
-				if errors.Is(err, zk.ErrNodeExists) {
-					s.state.lockCreated = true
-					s.createCompleted(sess)
-					return
-				}
-				panic(err)
+			if err == nil || errors.Is(err, zk.ErrNodeExists) {
+				s.state.lockCreated = true
+				s.createCompleted(sess)
+				return
 			}
-			s.state.lockCreated = true
-			s.createCompleted(sess)
-		})
-		client.Create(s.getNodesPath(), nil, 0, func(resp zk.CreateResponse, err error) {
-			if err != nil {
-				if errors.Is(err, zk.ErrNodeExists) {
-					s.createEphemeralNode(sess)
-					return
-				}
-				panic(err)
+			if errors.Is(err, zk.ErrConnectionClosed) {
+				sess.AddRetry(s.createLockNode)
+				return
 			}
-			s.createEphemeralNode(sess)
-		})
-		client.Create(s.getAssignsPath(), nil, 0, func(resp zk.CreateResponse, err error) {
-			if err != nil {
-				if errors.Is(err, zk.ErrNodeExists) {
-					s.assignsCreated(sess)
-					return
-				}
-				panic(err)
-			}
-			s.assignsCreated(sess)
+			panic(err)
 		})
 	})
 }
 
-func (s *Sharding) assignsCreated(sess *curator.Session) {
-	s.state.assignsCreated = true
-	s.createCompleted(sess)
+func (s *Sharding) createNodesPath(sess *curator.Session) {
+	sess.Run(func(client curator.Client) {
+		client.Create(s.getNodesPath(), nil, 0, func(resp zk.CreateResponse, err error) {
+			if err == nil || errors.Is(err, zk.ErrNodeExists) {
+				s.createEphemeralNode(sess)
+				return
+			}
+			if errors.Is(err, zk.ErrConnectionClosed) {
+				sess.AddRetry(s.createNodesPath)
+				return
+			}
+			panic(err)
+		})
+	})
+}
+
+func (s *Sharding) createAssignsNode(sess *curator.Session) {
+	sess.Run(func(client curator.Client) {
+		client.Create(s.getAssignsPath(), nil, 0, func(resp zk.CreateResponse, err error) {
+			if err == nil || errors.Is(err, zk.ErrNodeExists) {
+				s.state.assignsCreated = true
+				s.createCompleted(sess)
+				return
+			}
+			if errors.Is(err, zk.ErrConnectionClosed) {
+				sess.AddRetry(s.createAssignsNode)
+				return
+			}
+			panic(err)
+		})
+	})
 }
 
 func (s *Sharding) createEphemeralNode(sess *curator.Session) {
@@ -147,22 +161,19 @@ func (s *Sharding) createEphemeralNode(sess *curator.Session) {
 			[]byte("address01"),
 			zk.FlagEphemeral,
 			func(resp zk.CreateResponse, err error) {
-				if err != nil {
-					if errors.Is(err, zk.ErrNodeExists) {
-						s.nodesCreated(sess)
-						return
-					}
-					panic(err)
+				if err == nil || errors.Is(err, zk.ErrNodeExists) {
+					s.state.nodesCreated = true
+					s.createCompleted(sess)
+					return
 				}
-				s.nodesCreated(sess)
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(s.createEphemeralNode)
+					return
+				}
+				panic(err)
 			},
 		)
 	})
-}
-
-func (s *Sharding) nodesCreated(sess *curator.Session) {
-	s.state.nodesCreated = true
-	s.createCompleted(sess)
 }
 
 func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.Session)) {
@@ -173,6 +184,7 @@ func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.
 func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string) {
 	sess.Run(func(client curator.Client) {
 		client.Get(s.getAssignsPath()+"/"+nodeID, func(resp zk.GetResponse, err error) {
+			// TODO Check Connection Error
 			if err != nil {
 				panic(err)
 			}
@@ -200,6 +212,7 @@ func (s *Sharding) startHandleNodeChanges(sess *curator.Session) {
 func (s *Sharding) listAssignNodes(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
 		client.Children(s.getAssignsPath(), func(resp zk.ChildrenResponse, err error) {
+			// TODO Check Connection Error
 			if err != nil {
 				panic(err)
 			}
@@ -215,6 +228,7 @@ func (s *Sharding) listAssignNodes(sess *curator.Session) {
 func (s *Sharding) listActiveNodes(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
 		client.ChildrenW(s.getNodesPath(), func(resp zk.ChildrenResponse, err error) {
+			// TODO Check Connection Error
 			if err != nil {
 				panic(err)
 			}
@@ -283,6 +297,7 @@ func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string) {
 	sess.Run(func(client curator.Client) {
 		version := s.state.currentAssignMap[nodeID].version
 		client.Delete(s.getAssignsPath()+"/"+nodeID, version, func(resp zk.DeleteResponse, err error) {
+			// TODO Check Connection Error
 			if err != nil {
 				panic(err)
 			}
@@ -333,6 +348,7 @@ func (s *Sharding) upsertAssigns(sess *curator.Session, nodeID string, shards []
 	if ok {
 		sess.Run(func(client curator.Client) {
 			client.Set(pathVal, data, prev.version, func(resp zk.SetResponse, err error) {
+				// TODO Check Connection Error
 				if err != nil {
 					panic(err)
 				}
@@ -345,6 +361,7 @@ func (s *Sharding) upsertAssigns(sess *curator.Session, nodeID string, shards []
 	} else {
 		sess.Run(func(client curator.Client) {
 			client.Create(pathVal, data, 0, func(resp zk.CreateResponse, err error) {
+				// TODO Check Connection Error
 				if err != nil {
 					panic(err)
 				}

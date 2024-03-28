@@ -297,3 +297,43 @@ func TestSharding_Three_Nodes__Lease_Expired(t *testing.T) {
 	assert.Equal(t, "node03", children[1].Name)
 	assert.Equal(t, `{"shards":[6,7,1,2]}`, string(children[1].Data))
 }
+
+func TestSharding_Create_Container_Nodes__Connection_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	children := store.Root.Children[0].Children
+	assert.Equal(t, 3, len(children))
+	assert.Equal(t, "lock", children[0].Name)
+	assert.Equal(t, "nodes", children[1].Name)
+	assert.Equal(t, "assigns", children[2].Name)
+}
+
+func TestSharding_Create_Ephemeral_Node_Connection_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	store.CreateApply(client1)
+
+	children := store.Root.Children[0].Children[1].Children
+	assert.Equal(t, 1, len(children))
+	assert.Equal(t, "node01", children[0].Name)
+}
