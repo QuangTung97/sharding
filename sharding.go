@@ -24,6 +24,11 @@ type Sharding struct {
 	lockBegin func(sess *curator.Session)
 }
 
+type assignState struct {
+	version int32
+	shards  []ShardID
+}
+
 type sessionState struct {
 	lockCreated    bool
 	nodesCreated   bool
@@ -31,8 +36,10 @@ type sessionState struct {
 	leaderStarted  bool
 
 	nodes            []string
-	currentAssigns   []string
-	currentAssignMap map[string][]ShardID
+	currentAssignMap map[string]assignState
+
+	getAssignsRemain         int
+	listActiveNodesCompleted bool
 }
 
 func NewNodeID() string {
@@ -75,7 +82,9 @@ func (s *Sharding) getAssignsPath() string {
 }
 
 func (s *Sharding) createContainerNodes(sess *curator.Session, next func(sess *curator.Session)) {
-	s.state = &sessionState{}
+	s.state = &sessionState{
+		currentAssignMap: map[string]assignState{},
+	}
 	s.lockBegin = next
 	s.createInitNodes(sess)
 }
@@ -157,10 +166,53 @@ func (s *Sharding) nodesCreated(sess *curator.Session) {
 }
 
 func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.Session)) {
-	s.leaderStarted(sess)
+	s.listAssignNodes(sess)
+	s.listActiveNodes(sess)
 }
 
-func (s *Sharding) leaderStarted(sess *curator.Session) {
+func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string) {
+	sess.Run(func(client curator.Client) {
+		client.Get(s.getAssignsPath()+"/"+nodeID, func(resp zk.GetResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
+
+			var assign assignData
+			if err := json.Unmarshal(resp.Data, &assign); err != nil {
+				panic(err)
+			}
+			s.state.currentAssignMap[nodeID] = assignState{
+				version: resp.Stat.Version,
+				shards:  assign.Shards,
+			}
+			s.state.getAssignsRemain--
+			s.startHandleNodeChanges(sess)
+		})
+	})
+}
+
+func (s *Sharding) startHandleNodeChanges(sess *curator.Session) {
+	if s.state.getAssignsRemain == 0 && s.state.listActiveNodesCompleted {
+		s.handleNodesChanged(sess)
+	}
+}
+
+func (s *Sharding) listAssignNodes(sess *curator.Session) {
+	sess.Run(func(client curator.Client) {
+		client.Children(s.getAssignsPath(), func(resp zk.ChildrenResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
+			s.state.getAssignsRemain = len(resp.Children)
+			for _, nodeID := range resp.Children {
+				s.getAssignNodeData(sess, nodeID)
+			}
+			s.startHandleNodeChanges(sess)
+		})
+	})
+}
+
+func (s *Sharding) listActiveNodes(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
 		client.ChildrenW(s.getNodesPath(), func(resp zk.ChildrenResponse, err error) {
 			if err != nil {
@@ -169,9 +221,12 @@ func (s *Sharding) leaderStarted(sess *curator.Session) {
 
 			s.state.nodes = resp.Children
 			slices.Sort(s.state.nodes)
-
-			s.handleNodesChanged(sess)
+			s.state.listActiveNodesCompleted = true
+			s.startHandleNodeChanges(sess)
 		}, func(ev zk.Event) {
+			if ev.Type == zk.EventNodeChildrenChanged {
+				s.listActiveNodes(sess)
+			}
 		})
 	})
 }
@@ -182,21 +237,30 @@ func (s *Sharding) handleNodesChanged(sess *curator.Session) {
 	maxShardsPerNode := (s.numShards + n - 1) / n
 	numMax := s.numShards - minShardsPerNode*n
 
-	nodes := make([]string, n)
-	copy(nodes, s.state.nodes)
+	nodes := slices.Clone(s.state.nodes)
 	slices.SortStableFunc(nodes, func(a, b string) int {
-		assignA := s.state.currentAssignMap[a]
-		assignB := s.state.currentAssignMap[b]
+		assignA := s.state.currentAssignMap[a].shards
+		assignB := s.state.currentAssignMap[b].shards
 		return len(assignB) - len(assignA)
 	})
+	nodeSet := map[string]struct{}{}
+	for _, nodeID := range nodes {
+		nodeSet[nodeID] = struct{}{}
+	}
 
 	freeShards := map[ShardID]struct{}{}
 	for id := 0; id < int(s.numShards); id++ {
 		freeShards[ShardID(id)] = struct{}{}
 	}
 
-	for _, list := range s.state.currentAssignMap {
-		for _, id := range list {
+	var deleted []string
+	for nodeID, assigningState := range s.state.currentAssignMap {
+		_, ok := nodeSet[nodeID]
+		if !ok {
+			deleted = append(deleted, nodeID)
+			continue
+		}
+		for _, id := range assigningState.shards {
 			delete(freeShards, id)
 		}
 	}
@@ -208,12 +272,23 @@ func (s *Sharding) handleNodesChanged(sess *curator.Session) {
 	for i := int(numMax); i < int(n); i++ {
 		s.updateIfChanged(sess, nodes[i], int(minShardsPerNode), freeShards)
 	}
+
+	slices.Sort(deleted)
+	for _, nodeID := range deleted {
+		s.deleteAssignNode(sess, nodeID)
+	}
 }
 
-type ShardID uint32
-
-type assignData struct {
-	Shards []ShardID `json:"shards"`
+func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string) {
+	sess.Run(func(client curator.Client) {
+		version := s.state.currentAssignMap[nodeID].version
+		client.Delete(s.getAssignsPath()+"/"+nodeID, version, func(resp zk.DeleteResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
+			delete(s.state.currentAssignMap, nodeID)
+		})
+	})
 }
 
 func freeShardsToList(freeShards map[ShardID]struct{}) []ShardID {
@@ -229,7 +304,7 @@ func (s *Sharding) updateIfChanged(
 	sess *curator.Session,
 	nodeID string, expectLen int, freeShards map[ShardID]struct{},
 ) {
-	current := s.state.currentAssignMap[nodeID]
+	current := slices.Clone(s.state.currentAssignMap[nodeID].shards)
 	if len(current) > expectLen {
 		return
 	}
@@ -253,13 +328,32 @@ func (s *Sharding) upsertAssigns(sess *curator.Session, nodeID string, shards []
 	if err != nil {
 		panic(err)
 	}
-	sess.Run(func(client curator.Client) {
-		client.Create(pathVal, data, 0, func(resp zk.CreateResponse, err error) {
-			if err != nil {
-				panic(err)
-			}
+
+	prev, ok := s.state.currentAssignMap[nodeID]
+	if ok {
+		sess.Run(func(client curator.Client) {
+			client.Set(pathVal, data, prev.version, func(resp zk.SetResponse, err error) {
+				if err != nil {
+					panic(err)
+				}
+				s.state.currentAssignMap[nodeID] = assignState{
+					version: resp.Stat.Version,
+					shards:  shards,
+				}
+			})
 		})
-	})
+	} else {
+		sess.Run(func(client curator.Client) {
+			client.Create(pathVal, data, 0, func(resp zk.CreateResponse, err error) {
+				if err != nil {
+					panic(err)
+				}
+				s.state.currentAssignMap[nodeID] = assignState{
+					shards: shards,
+				}
+			})
+		})
+	}
 }
 
 func (s *Sharding) GetCurator() *curator.Curator {
