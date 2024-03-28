@@ -2,6 +2,7 @@ package sharding
 
 import (
 	"errors"
+	"log"
 
 	"github.com/QuangTung97/zk"
 	"github.com/QuangTung97/zk/curator"
@@ -21,7 +22,7 @@ func sessMustCreate(
 				sess.AddRetry(loop)
 				return
 			}
-			panic(err)
+			log.Panicf("Create node with error: %v, path: %s", err, path)
 		})
 	}
 	loop = func(sess *curator.Session) {
