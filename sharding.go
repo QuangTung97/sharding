@@ -20,6 +20,8 @@ type Sharding struct {
 
 	cur *curator.Curator
 
+	obs *observerCore
+
 	state *sessionState
 
 	lockBegin func(sess *curator.Session)
@@ -57,6 +59,7 @@ func NewNodeID() string {
 func New(
 	parentPath string, nodeID string,
 	numShards ShardID, nodeAddr string,
+	options ...Option,
 ) *Sharding {
 	s := &Sharding{
 		parentPath: parentPath,
@@ -65,11 +68,22 @@ func New(
 		nodeAddr:   nodeAddr,
 	}
 
+	for _, fn := range options {
+		fn(s)
+	}
+
 	lock := concurrency.NewLock(s.getLockPath(), nodeID)
+
+	startLeader := func(sess *curator.Session, next func(sess *curator.Session)) {
+		lock.Start(sess, next)
+		if s.obs != nil {
+			s.obs.onStart(sess)
+		}
+	}
 
 	s.cur = curator.NewChain(
 		s.createContainerNodes,
-		lock.Start,
+		startLeader,
 		s.onLeaderCallback,
 	)
 

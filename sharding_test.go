@@ -50,9 +50,10 @@ func startSharding(
 	store *curator.FakeZookeeper,
 	client curator.FakeClientID,
 	nodeID string,
+	options ...Option,
 ) {
 	factory := curator.NewFakeClientFactory(store, client)
-	s := New(parentPath, nodeID, numShards, fmt.Sprintf("%s-addr:4001", nodeID))
+	s := New(parentPath, nodeID, numShards, fmt.Sprintf("%s-addr:4001", nodeID), options...)
 	factory.Start(s.GetCurator())
 }
 
@@ -608,4 +609,51 @@ func TestSharding__Client1_Created__Then_Client2_Added(t *testing.T) {
 
 	assert.Equal(t, "node02", children[1].Name)
 	assert.Equal(t, `{"shards":[4,5,6,7]}`, string(children[1].Data))
+}
+
+func TestSharding_WithObserver_SingleNode(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+
+	startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	store.Begin(client1)
+
+	initContainerNodes(store, client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	store.GetApply(client1)
+
+	// lock completed
+	store.ChildrenApply(client1)
+
+	// create allocations
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	assert.Equal(t, 0, len(events))
+
+	// list assigns again
+	store.ChildrenApply(client1)
+	store.GetApply(client1)
+
+	assert.Equal(t, []ChangeEvent{
+		{
+			New: []Node{
+				{
+					ID:      "node01",
+					Address: "node01-addr:4001",
+					Shards:  []ShardID{0, 1, 2, 3, 4, 5, 6, 7},
+					MZxid:   107,
+				},
+			},
+		},
+	}, events)
 }
