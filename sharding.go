@@ -16,6 +16,7 @@ type Sharding struct {
 	parentPath string
 	nodeID     string
 	numShards  ShardID
+	nodeAddr   string
 
 	cur *curator.Curator
 
@@ -53,11 +54,15 @@ func NewNodeID() string {
 	return hex.EncodeToString(data[:])
 }
 
-func New(parentPath string, nodeID string, numShards ShardID) *Sharding {
+func New(
+	parentPath string, nodeID string,
+	numShards ShardID, nodeAddr string,
+) *Sharding {
 	s := &Sharding{
 		parentPath: parentPath,
 		nodeID:     nodeID,
 		numShards:  numShards,
+		nodeAddr:   nodeAddr,
 	}
 
 	lock := concurrency.NewLock(s.getLockPath(), nodeID)
@@ -72,15 +77,15 @@ func New(parentPath string, nodeID string, numShards ShardID) *Sharding {
 }
 
 func (s *Sharding) getLockPath() string {
-	return s.parentPath + "/lock"
+	return s.parentPath + lockZNodeName
 }
 
 func (s *Sharding) getNodesPath() string {
-	return s.parentPath + "/nodes"
+	return s.parentPath + nodeZNodeName
 }
 
 func (s *Sharding) getAssignsPath() string {
-	return s.parentPath + "/assigns"
+	return s.parentPath + assignZNodeName
 }
 
 func (s *Sharding) createContainerNodes(sess *curator.Session, next func(sess *curator.Session)) {
@@ -119,7 +124,9 @@ func (s *Sharding) createInitNodes(sess *curator.Session) {
 
 func (s *Sharding) createEphemeralNode(sess *curator.Session) {
 	pathVal := s.getNodesPath() + "/" + s.nodeID
-	sessMustCreate(sess, pathVal, zk.FlagEphemeral, func(resp zk.CreateResponse) {
+	data := nodeData{Address: s.nodeAddr}.marshalJSON()
+
+	sessMustCreateWithData(sess, pathVal, zk.FlagEphemeral, data, func(resp zk.CreateResponse) {
 		s.state.nodesCreated = true
 		s.createCompleted(sess)
 	})

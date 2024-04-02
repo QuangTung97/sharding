@@ -8,12 +8,12 @@ import (
 	"github.com/QuangTung97/zk/curator"
 )
 
-func sessMustCreate(
-	sess *curator.Session, path string, flags int32, callback func(resp zk.CreateResponse),
+func sessMustCreateWithData(
+	sess *curator.Session, path string, flags int32, data []byte, callback func(resp zk.CreateResponse),
 ) {
 	var loop func(sess *curator.Session)
 	clientCall := func(client curator.Client) {
-		client.Create(path, nil, flags, func(resp zk.CreateResponse, err error) {
+		client.Create(path, data, flags, func(resp zk.CreateResponse, err error) {
 			if err == nil || errors.Is(err, zk.ErrNodeExists) {
 				callback(resp)
 				return
@@ -34,7 +34,7 @@ func sessMustCreate(
 func sessMustCreatePersistence(
 	sess *curator.Session, path string, callback func(resp zk.CreateResponse),
 ) {
-	sessMustCreate(sess, path, 0, callback)
+	sessMustCreateWithData(sess, path, 0, nil, callback)
 }
 
 func sessMustChildren(sess *curator.Session, path string, callback func(resp zk.ChildrenResponse)) {

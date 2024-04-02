@@ -14,7 +14,7 @@ import (
 func main() {
 	nodeID := sharding.NewNodeID()
 	fmt.Println("NODE_ID:", nodeID)
-	s := sharding.New("/sm", nodeID, 16)
+	s := sharding.New("/sm", nodeID, 16, "localhost:4001")
 
 	factory := curator.NewClientFactory(
 		[]string{"localhost"}, "user01", "password01",

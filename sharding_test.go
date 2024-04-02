@@ -52,7 +52,7 @@ func startSharding(
 	nodeID string,
 ) {
 	factory := curator.NewFakeClientFactory(store, client)
-	s := New(parentPath, nodeID, numShards)
+	s := New(parentPath, nodeID, numShards, fmt.Sprintf("%s-addr:4001", nodeID))
 	factory.Start(s.GetCurator())
 }
 
@@ -86,6 +86,11 @@ func TestSharding_Begin(t *testing.T) {
 	assert.Equal(t, 1, len(children))
 	assert.Equal(t, "node01", children[0].Name)
 	assert.Equal(t, `{"shards":[0,1,2,3,4,5,6,7]}`, string(children[0].Data))
+
+	assert.Equal(t, "nodes", lockNode.Children[1].Name)
+	nodes := lockNode.Children[1]
+	assert.Equal(t, "node01", nodes.Children[0].Name)
+	assert.Equal(t, `{"address":"node01-addr:4001"}`, string(nodes.Children[0].Data))
 }
 
 func initContainerNodes(store *curator.FakeZookeeper, client curator.FakeClientID) {
@@ -313,7 +318,7 @@ func TestSharding_Create_Container_Nodes__Connection_Error(t *testing.T) {
 
 	children := store.Root.Children[0].Children
 	assert.Equal(t, 3, len(children))
-	assert.Equal(t, "lock", children[0].Name)
+	assert.Equal(t, "locks", children[0].Name)
 	assert.Equal(t, "nodes", children[1].Name)
 	assert.Equal(t, "assigns", children[2].Name)
 }
