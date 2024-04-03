@@ -1055,3 +1055,110 @@ func TestSharding_Observer_Get_Node_Data_Error(t *testing.T) {
 		},
 	}, events[0].New)
 }
+
+func TestSharding_Observer_3_Nodes__One_Watch_Partial_Results(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+
+	startSharding(store, client1, "node01")
+	startSharding(store, client2, "node02")
+	sharding3 := startSharding(store, client3, "node03", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	store.Begin(client1)
+	store.Begin(client2)
+	store.Begin(client3)
+
+	initContainerNodes(store, client1)
+	initContainerNodes(store, client2)
+	initContainerNodes(store, client3)
+
+	lockGranted(store, client1)
+	lockBlocked(store, client2)
+
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+	store.CreateApply(client3)
+
+	store.GetApply(client3)
+	store.GetApply(client3)
+	store.GetApply(client3)
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+	store.GetApply(client3)
+
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client3)
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2},
+			MZxid:   111,
+		},
+		{
+			ID:      "node02",
+			Address: "node02-addr:4001",
+			Shards:  []ShardID{3, 4, 5},
+			MZxid:   112,
+		},
+		{
+			ID:      "node03",
+			Address: "node03-addr:4001",
+			Shards:  []ShardID{6, 7},
+			MZxid:   113,
+		},
+	}, events[0].New)
+
+	// ====================
+	// Node 2 Expired
+	// ====================
+	store.SessionExpired(client2)
+
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+
+	store.ChildrenApply(client1)
+
+	store.SetApply(client1)
+	store.GetApply(client3)
+
+	store.SetApply(client1)
+
+	assert.Equal(t, 1, len(events))
+	store.GetApply(client3)
+	assert.Equal(t, 2, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3},
+			MZxid:   115,
+		},
+		{
+			ID:      "node03",
+			Address: "node03-addr:4001",
+			Shards:  []ShardID{6, 7, 4, 5},
+			MZxid:   116,
+		},
+	}, events[1].New)
+
+	store.DeleteApply(client1)
+	store.ChildrenApply(client3)
+	assert.Equal(t, 2, len(events))
+
+	assert.Equal(t, []string{"node01", "node03"}, getKeys(sharding3.obs.nodes))
+}
