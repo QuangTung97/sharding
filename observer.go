@@ -1,7 +1,9 @@
 package sharding
 
 import (
+	"cmp"
 	"encoding/json"
+	"slices"
 
 	"github.com/QuangTung97/zk"
 	"github.com/QuangTung97/zk/curator"
@@ -29,16 +31,18 @@ type observerNodeData struct {
 
 type observerCore struct {
 	parent       string
+	numShards    ShardID
 	observerFunc ObserverFunc
 
-	remainNodes int
+	oldNotify []Node
 
 	nodes map[string]*observerNodeData
 }
 
-func newObserverCore(parent string, observerFunc ObserverFunc) *observerCore {
+func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc) *observerCore {
 	return &observerCore{
 		parent:       parent,
+		numShards:    numShards,
 		observerFunc: observerFunc,
 
 		nodes: map[string]*observerNodeData{},
@@ -60,6 +64,9 @@ func (c *observerCore) listNodes(sess *curator.Session) {
 				c.handleNodesChildren(sess, resp)
 			},
 			func(ev zk.Event) {
+				if ev.Type == zk.EventNodeChildrenChanged {
+					c.listNodes(sess)
+				}
 			},
 		)
 	})
@@ -79,32 +86,90 @@ func (c *observerCore) listAssigns(sess *curator.Session) {
 			},
 		)
 	})
+}
 
+func (c *observerCore) getNodeIDsNotInList(l []string) []string {
+	inputSet := map[string]struct{}{}
+	for _, e := range l {
+		inputSet[e] = struct{}{}
+	}
+
+	var result []string
+	for k := range c.nodes {
+		_, ok := inputSet[k]
+		if !ok {
+			result = append(result, k)
+		}
+	}
+
+	return result
 }
 
 func (c *observerCore) handleNodesChildren(sess *curator.Session, resp zk.ChildrenResponse) {
-	for _, node := range resp.Children {
-		sess.Run(func(client curator.Client) {
-			c.remainNodes++
-			client.Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
-				c.remainNodes--
-				if err != nil {
-					panic(err)
-				}
-				c.handleNodeData(sess, node, resp)
-			})
+	for _, tmpNode := range resp.Children {
+		node := tmpNode
+		n := c.getNode(node)
+		if len(n.data.Address) > 0 {
+			continue
+		}
+		c.getNodeData(sess, node)
+	}
+
+	c.cleanUpUnusedNodes(resp.Children, func(n *observerNodeData) {
+		n.data = nodeData{}
+	})
+}
+
+func (c *observerCore) getNodeData(sess *curator.Session, node string) {
+	sess.Run(func(client curator.Client) {
+		client.Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
+			c.handleNodeData(node, resp)
 		})
+	})
+}
+
+func (c *observerCore) cleanUpUnusedNodes(newChildren []string, handler func(n *observerNodeData)) {
+	checkNodes := c.getNodeIDsNotInList(newChildren)
+	var deletedNodes []string
+
+	for _, nodeID := range checkNodes {
+		info := c.getNode(nodeID)
+		handler(info)
+		if len(info.data.Address) == 0 && info.mzxid == 0 {
+			deletedNodes = append(deletedNodes, nodeID)
+		}
+	}
+
+	for _, node := range deletedNodes {
+		delete(c.nodes, node)
 	}
 }
 
 func (c *observerCore) handleAssignsChildren(sess *curator.Session, resp zk.ChildrenResponse) {
-	for _, child := range resp.Children {
+	for _, tmpNode := range resp.Children {
+		child := tmpNode
+		n := c.getNode(child)
+		if n.mzxid > 0 {
+			continue
+		}
 		c.getAssignNode(sess, child)
 	}
+
+	c.cleanUpUnusedNodes(resp.Children, func(n *observerNodeData) {
+		n.mzxid = 0
+	})
+}
+
+type shardAssign struct {
+	nodeID string
+	zxid   int64
 }
 
 func (c *observerCore) notifyObserver() {
-	var newList []Node
+	shardAlloc := map[ShardID]shardAssign{}
 	for nodeID, info := range c.nodes {
 		if len(info.data.Address) == 0 {
 			continue
@@ -112,14 +177,54 @@ func (c *observerCore) notifyObserver() {
 		if info.mzxid <= 0 {
 			continue
 		}
+
+		for _, shardID := range info.shards {
+			prev := shardAlloc[shardID]
+			if prev.zxid > info.mzxid {
+				continue
+			}
+			shardAlloc[shardID] = shardAssign{
+				nodeID: nodeID,
+				zxid:   info.mzxid,
+			}
+		}
+	}
+
+	var newList []Node
+	for nodeID, info := range c.nodes {
+		var newShards []ShardID
+		for _, shardID := range info.shards {
+			n := shardAlloc[shardID]
+			if n.nodeID == nodeID {
+				newShards = append(newShards, shardID)
+			}
+		}
+
+		if len(newShards) == 0 {
+			continue
+		}
+
 		newList = append(newList, Node{
 			ID:      nodeID,
 			Address: info.data.Address,
-			Shards:  info.shards,
+			Shards:  newShards,
 			MZxid:   info.mzxid,
 		})
 	}
+
+	if len(shardAlloc) < int(c.numShards) {
+		return
+	}
+
+	slices.SortFunc(newList, func(a, b Node) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+
+	oldList := c.oldNotify
+	c.oldNotify = newList
+
 	c.observerFunc(ChangeEvent{
+		Old: oldList,
 		New: newList,
 	})
 }
@@ -132,6 +237,9 @@ func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 			}
 			c.handleGetAssignData(nodeID, resp)
 		}, func(ev zk.Event) {
+			if ev.Type == zk.EventNodeDataChanged {
+				c.getAssignNode(sess, nodeID)
+			}
 		})
 	})
 }
@@ -156,7 +264,7 @@ func (c *observerCore) getNode(nodeID string) *observerNodeData {
 	return n
 }
 
-func (c *observerCore) handleNodeData(sess *curator.Session, nodeID string, resp zk.GetResponse) {
+func (c *observerCore) handleNodeData(nodeID string, resp zk.GetResponse) {
 	var data nodeData
 	err := json.Unmarshal(resp.Data, &data)
 	if err != nil {

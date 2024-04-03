@@ -4,6 +4,6 @@ type Option func(s *Sharding)
 
 func WithShardingObserver(fn ObserverFunc) Option {
 	return func(s *Sharding) {
-		s.obs = newObserverCore(s.parentPath, fn)
+		s.obs = newObserverCore(s.parentPath, s.numShards, fn)
 	}
 }
