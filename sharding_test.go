@@ -1,9 +1,7 @@
 package sharding
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"testing"
 
 	"github.com/QuangTung97/zk"
@@ -739,15 +737,6 @@ func TestSharding_WithObserver_SingleNode__Then_New_Node_Added(t *testing.T) {
 	assert.Equal(t, []string{"node01"}, getKeys(sharding1.obs.nodes))
 }
 
-func getKeys[K cmp.Ordered, V any](m map[K]V) []K {
-	keys := make([]K, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
 func TestSharding_WithObserver_OneNode_Then_2_Nodes_Added(t *testing.T) {
 	store := initStore()
 
@@ -979,4 +968,90 @@ func TestSharding_Observer_On_Non_Leader_Node(t *testing.T) {
 
 	assert.Equal(t, 0, len(store.PendingCalls(client2)))
 	assert.Equal(t, []string{"node02"}, getKeys(sharding2.obs.nodes))
+}
+
+func TestSharding_Observer_List_Conn_Error(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+	startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	store.Begin(client1)
+
+	initContainerNodes(store, client1)
+
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.CreateApply(client1)
+	store.GetApply(client1)
+	store.ChildrenApply(client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	store.ChildrenApply(client1)
+
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client1)
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3, 4, 5, 6, 7},
+			MZxid:   107,
+		},
+	}, events[0].New)
+}
+
+func TestSharding_Observer_Get_Node_Data_Error(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+	startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	store.Begin(client1)
+
+	initContainerNodes(store, client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	store.ChildrenApply(client1)
+	store.GetApply(client1)
+	store.CreateApply(client1)
+	store.ChildrenApply(client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+	store.ChildrenApply(client1)
+
+	// Get Assigns Node01 Error
+	store.ConnError(client1)
+	store.Retry(client1)
+
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client1)
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3, 4, 5, 6, 7},
+			MZxid:   107,
+		},
+	}, events[0].New)
 }

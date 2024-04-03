@@ -3,6 +3,7 @@ package sharding
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"slices"
 
 	"github.com/QuangTung97/zk"
@@ -59,6 +60,10 @@ func (c *observerCore) listNodes(sess *curator.Session) {
 		client.ChildrenW(c.parent+nodeZNodeName,
 			func(resp zk.ChildrenResponse, err error) {
 				if err != nil {
+					if errors.Is(err, zk.ErrConnectionClosed) {
+						sess.AddRetry(c.listNodes)
+						return
+					}
 					panic(err)
 				}
 				c.handleNodesChildren(sess, resp)
@@ -77,6 +82,10 @@ func (c *observerCore) listAssigns(sess *curator.Session) {
 		client.ChildrenW(c.parent+assignZNodeName,
 			func(resp zk.ChildrenResponse, err error) {
 				if err != nil {
+					if errors.Is(err, zk.ErrConnectionClosed) {
+						sess.AddRetry(c.listAssigns)
+						return
+					}
 					panic(err)
 				}
 				c.handleAssignsChildren(sess, resp)
@@ -124,6 +133,12 @@ func (c *observerCore) getNodeData(sess *curator.Session, node string) {
 	sess.Run(func(client curator.Client) {
 		client.Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
 			if err != nil {
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(func(sess *curator.Session) {
+						c.getNodeData(sess, node)
+					})
+					return
+				}
 				panic(err)
 			}
 			c.handleNodeData(node, resp)
@@ -168,9 +183,23 @@ type shardAssign struct {
 	zxid   int64
 }
 
+func getKeys[K cmp.Ordered, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 func (c *observerCore) notifyObserver() {
 	shardAlloc := map[ShardID]shardAssign{}
-	for nodeID, info := range c.nodes {
+
+	nodeIDList := getKeys(c.nodes)
+
+	for _, nodeID := range nodeIDList {
+		info := c.nodes[nodeID]
+
 		if len(info.data.Address) == 0 {
 			continue
 		}
@@ -233,6 +262,12 @@ func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 	sess.Run(func(client curator.Client) {
 		client.GetW(c.parent+assignZNodeName+"/"+nodeID, func(resp zk.GetResponse, err error) {
 			if err != nil {
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(func(sess *curator.Session) {
+						c.getAssignNode(sess, nodeID)
+					})
+					return
+				}
 				panic(err)
 			}
 			c.handleGetAssignData(nodeID, resp)
