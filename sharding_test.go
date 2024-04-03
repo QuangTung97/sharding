@@ -753,7 +753,7 @@ func TestSharding_WithObserver_OneNode_Then_2_Nodes_Added(t *testing.T) {
 
 	var events []ChangeEvent
 
-	startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
+	sharding1 := startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
 		events = append(events, event)
 	}))
 	store.Begin(client1)
@@ -867,4 +867,116 @@ func TestSharding_WithObserver_OneNode_Then_2_Nodes_Added(t *testing.T) {
 	assert.Equal(t, 3, len(events))
 
 	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+	assert.Equal(t, []string{"node01"}, getKeys(sharding1.obs.nodes))
+}
+
+func TestSharding_Observer_On_Non_Leader_Node(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01")
+	store.Begin(client1)
+
+	initContainerNodes(store, client1)
+	lockGranted(store, client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+
+	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+
+	// ========================
+	// Second Node Started
+	// ========================
+	var events []ChangeEvent
+	sharding2 := startSharding(store, client2, "node02", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	store.Begin(client2)
+	initContainerNodes(store, client2)
+
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+	store.CreateApply(client2)
+
+	store.GetApply(client2)
+	store.GetApply(client2)
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client2) // get assigns node01
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3, 4, 5, 6, 7},
+			MZxid:   107,
+		},
+	}, events[0].New)
+
+	store.ChildrenApply(client2)
+	store.GetApply(client2) // client 2 watch for lock of client 1
+
+	// Leader do rebalance
+	store.ChildrenApply(client1)
+	store.SetApply(client1)
+	store.CreateApply(client1)
+
+	store.GetApply(client2)
+	store.ChildrenApply(client2)
+
+	assert.Equal(t, 1, len(events))
+	store.GetApply(client2)
+	assert.Equal(t, 2, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3},
+			MZxid:   110,
+		},
+		{
+			ID:      "node02",
+			Address: "node02-addr:4001",
+			Shards:  []ShardID{4, 5, 6, 7},
+			MZxid:   111,
+		},
+	}, events[1].New)
+
+	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+	assert.Equal(t, 0, len(store.PendingCalls(client2)))
+
+	// ========================
+	// Leader Node Expired
+	// ========================
+	store.SessionExpired(client1)
+
+	store.ChildrenApply(client2) // new leader
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+	store.ChildrenApply(client2)
+
+	store.GetApply(client2)
+	store.GetApply(client2)
+
+	store.SetApply(client2)
+	store.DeleteApply(client2)
+
+	assert.Equal(t, 2, len(events))
+	store.GetApply(client2)
+	assert.Equal(t, 3, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node02",
+			Address: "node02-addr:4001",
+			Shards:  []ShardID{4, 5, 6, 7, 0, 1, 2, 3},
+			MZxid:   113,
+		},
+	}, events[2].New)
+
+	store.ChildrenApply(client2)
+	assert.Equal(t, 3, len(events))
+
+	assert.Equal(t, 0, len(store.PendingCalls(client2)))
+	assert.Equal(t, []string{"node02"}, getKeys(sharding2.obs.nodes))
 }
