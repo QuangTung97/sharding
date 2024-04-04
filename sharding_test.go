@@ -1162,3 +1162,133 @@ func TestSharding_Observer_3_Nodes__One_Watch_Partial_Results(t *testing.T) {
 
 	assert.Equal(t, []string{"node01", "node03"}, getKeys(sharding3.obs.nodes))
 }
+
+func TestSharding_Observer_2_Nodes_One_Node_Expired_When_Getting_Data(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+
+	startSharding(store, client1, "node01", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+	startSharding(store, client2, "node02")
+
+	store.Begin(client1)
+	store.Begin(client2)
+
+	initContainerNodes(store, client1)
+	initContainerNodes(store, client2)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.CreateApply(client1)
+	store.GetApply(client1)
+
+	// Node 2 Expired
+	store.SessionExpired(client2)
+
+	store.GetApply(client1)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+
+	store.CreateApply(client1)
+
+	store.ChildrenApply(client1) // assigns children
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client1)
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3, 4, 5, 6, 7},
+			MZxid:   109,
+		},
+	}, events[0].New)
+}
+
+func TestSharding_Observer_3_Nodes_One_Node_Expired_When_Getting_Data_With_Watch(t *testing.T) {
+	store := initStore()
+
+	var events []ChangeEvent
+
+	startSharding(store, client1, "node01")
+	startSharding(store, client2, "node02")
+	startSharding(store, client3, "node03", WithShardingObserver(func(event ChangeEvent) {
+		events = append(events, event)
+	}))
+
+	store.Begin(client1)
+	store.Begin(client2)
+	store.Begin(client3)
+
+	initContainerNodes(store, client1)
+	initContainerNodes(store, client2)
+	initContainerNodes(store, client3)
+
+	lockGranted(store, client1)
+	lockBlocked(store, client2)
+
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+	store.CreateApply(client3)
+	store.GetApply(client3)
+	store.GetApply(client3)
+	store.GetApply(client3)
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+
+	// Node 2 Expired
+	store.SessionExpired(client2)
+
+	store.ChildrenApply(client1)
+	store.SetApply(client1)
+	store.SetApply(client1)
+	store.DeleteApply(client1)
+
+	// Client 3 Run Again
+	store.GetApply(client3)
+	store.GetApply(client3)
+
+	store.ChildrenApply(client3)
+	store.ChildrenApply(client3)
+
+	assert.Equal(t, 0, len(events))
+	store.GetApply(client3) // get assigns node03
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, []Node{
+		{
+			ID:      "node01",
+			Address: "node01-addr:4001",
+			Shards:  []ShardID{0, 1, 2, 3},
+			MZxid:   115,
+		},
+		{
+			ID:      "node03",
+			Address: "node03-addr:4001",
+			Shards:  []ShardID{6, 7, 4, 5},
+			MZxid:   116,
+		},
+	}, events[0].New)
+
+	store.ChildrenApply(client3)
+	store.GetApply(client3)
+
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, 0, len(store.PendingCalls(client3)))
+}

@@ -139,6 +139,9 @@ func (c *observerCore) getNodeData(sess *curator.Session, node string) {
 					})
 					return
 				}
+				if errors.Is(err, zk.ErrNoNode) {
+					return
+				}
 				panic(err)
 			}
 			c.handleNodeData(node, resp)
@@ -266,6 +269,9 @@ func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 					sess.AddRetry(func(sess *curator.Session) {
 						c.getAssignNode(sess, nodeID)
 					})
+					return
+				}
+				if errors.Is(err, zk.ErrNoNode) {
 					return
 				}
 				panic(err)
