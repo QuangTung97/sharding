@@ -4,17 +4,29 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/QuangTung97/zk/curator"
 
 	"github.com/QuangTung97/sharding"
 )
 
+func WatchChange(event sharding.ChangeEvent) {
+	fmt.Println("------------------------------------------")
+	for _, node := range event.New {
+		fmt.Printf("%+v\n", node)
+	}
+}
+
 func main() {
 	nodeID := sharding.NewNodeID()
 	fmt.Println("NODE_ID:", nodeID)
-	s := sharding.New("/sm", nodeID, 16, "localhost:4001")
+
+	addr := fmt.Sprintf("addr-%s:4001", nodeID)
+
+	s := sharding.New(
+		"/sm", nodeID, 8, addr,
+		sharding.WithShardingObserver(WatchChange),
+	)
 
 	factory := curator.NewClientFactory(
 		[]string{"localhost"}, "user01", "password01",
@@ -25,13 +37,5 @@ func main() {
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)
-
-	for i := 0; i < 6000; i++ {
-		time.Sleep(1 * time.Second)
-		select {
-		case <-ch:
-			return
-		default:
-		}
-	}
+	<-ch
 }

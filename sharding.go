@@ -18,6 +18,8 @@ type Sharding struct {
 	numShards  ShardID
 	nodeAddr   string
 
+	logger zk.Logger
+
 	cur *curator.Curator
 
 	obs *observerCore
@@ -66,6 +68,8 @@ func New(
 		nodeID:     nodeID,
 		numShards:  numShards,
 		nodeAddr:   nodeAddr,
+
+		logger: &defaultLoggerImpl{},
 	}
 
 	for _, fn := range options {
@@ -147,6 +151,7 @@ func (s *Sharding) createEphemeralNode(sess *curator.Session) {
 }
 
 func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.Session)) {
+	s.logger.Infof("Leader Started")
 	s.listAssignNodes(sess)
 	s.listActiveNodes(sess)
 }

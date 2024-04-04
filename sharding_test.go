@@ -1269,7 +1269,7 @@ func TestSharding_Observer_3_Nodes_One_Node_Expired_When_Getting_Data_With_Watch
 	store.ChildrenApply(client3)
 
 	assert.Equal(t, 0, len(events))
-	store.GetApply(client3) // get assigns node03
+	store.GetApply(client3) // get assigns node01
 	assert.Equal(t, 1, len(events))
 	assert.Equal(t, []Node{
 		{
