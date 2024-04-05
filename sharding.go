@@ -47,7 +47,17 @@ type sessionState struct {
 
 	getAssignNodesCompleted  bool
 	listActiveNodesCompleted bool
+
+	pending        map[actionType]struct{}
+	eventCallbacks []func()
 }
+
+type actionType int
+
+const (
+	actionTypeListNodes actionType = iota + 1
+	actionTypeListAssigns
+)
 
 func NewNodeID() string {
 	var data [16]byte
@@ -109,6 +119,7 @@ func (s *Sharding) getAssignsPath() string {
 func (s *Sharding) createContainerNodes(sess *curator.Session, next func(sess *curator.Session)) {
 	s.state = &sessionState{
 		currentAssignMap: map[string]assignState{},
+		pending:          map[actionType]struct{}{},
 	}
 	s.lockBegin = next
 	s.createInitNodes(sess)
@@ -156,16 +167,42 @@ func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.
 	s.listActiveNodes(sess)
 }
 
-func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, getRemains *int) {
+func (s *Sharding) onEvent(fn func(ev zk.Event)) func(ev zk.Event) {
+	return func(ev zk.Event) {
+		s.state.eventCallbacks = append(s.state.eventCallbacks, func() {
+			fn(ev)
+		})
+		s.runWatchEvents()
+	}
+}
+
+func (s *Sharding) runWatchEvents() {
+	if len(s.state.pending) == 0 {
+		callbacks := s.state.eventCallbacks
+		s.state.eventCallbacks = nil
+		for _, cb := range callbacks {
+			cb()
+		}
+	}
+}
+
+func (s *Sharding) beginAction(action actionType) func() {
+	s.state.pending[action] = struct{}{}
+	return func() {
+		delete(s.state.pending, action)
+		s.runWatchEvents()
+	}
+}
+
+func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, counter *callbackCounter) {
 	sess.Run(func(client curator.Client) {
+		finish := counter.begin()
 		client.Get(s.getAssignsPath()+"/"+nodeID, func(resp zk.GetResponse, err error) {
-			*getRemains--
+			defer finish()
 
 			if err != nil {
 				if errors.Is(err, zk.ErrConnectionClosed) {
-					if *getRemains <= 0 {
-						sess.AddRetry(s.listAssignNodes)
-					}
+					counter.addRetry(sess, s.listAssignNodes)
 					return
 				}
 				if errors.Is(err, zk.ErrNoNode) {
@@ -183,38 +220,70 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, getRe
 				version: resp.Stat.Version,
 				shards:  assign.Shards,
 			}
-
-			if *getRemains <= 0 {
-				s.state.getAssignNodesCompleted = true
-				s.startHandleNodeChanges(sess)
-			}
 		})
 	})
 }
 
-func (s *Sharding) startHandleNodeChanges(sess *curator.Session) {
+func (s *Sharding) startHandleNodeChanges(sess *curator.Session, finish func()) {
 	if s.state.listActiveNodesCompleted && s.state.getAssignNodesCompleted {
 		sess.Run(func(client curator.Client) {
-			s.handleNodesChanged(sess)
+			s.handleNodesChanged(sess, finish)
 		})
+	}
+	finish()
+}
+
+type callbackCounter struct {
+	count     int
+	callback  func()
+	finalFunc func()
+}
+
+func newCallbackCounter(callback func(), finalFunc func()) *callbackCounter {
+	return &callbackCounter{
+		callback:  callback,
+		finalFunc: finalFunc,
+	}
+}
+
+func (c *callbackCounter) begin() func() {
+	c.count++
+	return func() {
+		c.count--
+		if c.count <= 0 {
+			c.callback()
+			c.finalFunc()
+		}
+	}
+}
+
+func (c *callbackCounter) addRetry(sess *curator.Session, fn func(sess *curator.Session)) {
+	c.callback = func() {
+		sess.AddRetry(fn)
 	}
 }
 
 func (s *Sharding) listAssignNodes(sess *curator.Session) {
+	finish := s.beginAction(actionTypeListAssigns)
+
 	sessMustChildren(sess, s.getAssignsPath(), func(resp zk.ChildrenResponse) {
-		getRemains := len(resp.Children)
-		for _, nodeID := range resp.Children {
-			s.getAssignNodeData(sess, nodeID, &getRemains)
-		}
-		if getRemains <= 0 {
+		counter := newCallbackCounter(func() {
 			s.state.getAssignNodesCompleted = true
-			s.startHandleNodeChanges(sess)
+			s.startHandleNodeChanges(sess, finish)
+		}, func() {})
+
+		fn := counter.begin()
+		for _, nodeID := range resp.Children {
+			s.getAssignNodeData(sess, nodeID, counter)
 		}
+		fn()
 	})
 }
 
 func (s *Sharding) listActiveNodes(sess *curator.Session) {
 	sess.Run(func(client curator.Client) {
+		finish := s.beginAction(actionTypeListNodes)
+
 		client.ChildrenW(s.getNodesPath(), func(resp zk.ChildrenResponse, err error) {
 			if err != nil {
 				if errors.Is(err, zk.ErrConnectionClosed) {
@@ -226,16 +295,16 @@ func (s *Sharding) listActiveNodes(sess *curator.Session) {
 			s.state.nodes = resp.Children
 			slices.Sort(s.state.nodes)
 			s.state.listActiveNodesCompleted = true
-			s.startHandleNodeChanges(sess)
-		}, func(ev zk.Event) {
+			s.startHandleNodeChanges(sess, finish)
+		}, s.onEvent(func(ev zk.Event) {
 			if ev.Type == zk.EventNodeChildrenChanged {
 				s.listActiveNodes(sess)
 			}
-		})
+		}))
 	})
 }
 
-func (s *Sharding) handleNodesChanged(sess *curator.Session) {
+func (s *Sharding) handleNodesChanged(sess *curator.Session, finish func()) {
 	n := ShardID(len(s.state.nodes))
 	minShardsPerNode := s.numShards / n
 	maxShardsPerNode := (s.numShards + n - 1) / n
@@ -269,19 +338,19 @@ func (s *Sharding) handleNodesChanged(sess *curator.Session) {
 		}
 	}
 
-	actionCount := 0
+	counter := newCallbackCounter(func() {}, finish)
 
 	for i := 0; i < int(numMax); i++ {
-		s.updateIfChanged(sess, nodes[i], int(maxShardsPerNode), freeShards, &actionCount)
+		s.updateIfChanged(sess, nodes[i], int(maxShardsPerNode), freeShards, counter)
 	}
 
 	for i := int(numMax); i < int(n); i++ {
-		s.updateIfChanged(sess, nodes[i], int(minShardsPerNode), freeShards, &actionCount)
+		s.updateIfChanged(sess, nodes[i], int(minShardsPerNode), freeShards, counter)
 	}
 
 	slices.Sort(deleted)
 	for _, nodeID := range deleted {
-		s.deleteAssignNode(sess, nodeID, &actionCount)
+		s.deleteAssignNode(sess, nodeID, counter)
 	}
 }
 
@@ -297,7 +366,7 @@ func freeShardsToList(freeShards map[ShardID]struct{}) []ShardID {
 func (s *Sharding) updateIfChanged(
 	sess *curator.Session,
 	nodeID string, expectLen int, freeShards map[ShardID]struct{},
-	actionCount *int,
+	counter *callbackCounter,
 ) {
 	current := slices.Clone(s.state.currentAssignMap[nodeID].shards)
 	if len(current) > expectLen {
@@ -305,7 +374,7 @@ func (s *Sharding) updateIfChanged(
 			freeShards[id] = struct{}{}
 		}
 		current = current[:expectLen]
-		s.upsertAssigns(sess, nodeID, current, actionCount)
+		s.upsertAssigns(sess, nodeID, current, counter)
 		return
 	}
 	if len(current) < expectLen {
@@ -315,7 +384,7 @@ func (s *Sharding) updateIfChanged(
 		for _, id := range list[:missing] {
 			delete(freeShards, id)
 		}
-		s.upsertAssigns(sess, nodeID, current, actionCount)
+		s.upsertAssigns(sess, nodeID, current, counter)
 		return
 	}
 }
@@ -336,25 +405,23 @@ func (s *Sharding) getNodeAssignPath(nodeID string) string {
 
 func (s *Sharding) upsertAssigns(
 	sess *curator.Session, nodeID string, shards []ShardID,
-	actionCount *int,
+	counter *callbackCounter,
 ) {
 	prev, ok := s.state.currentAssignMap[nodeID]
 	if ok {
-		s.updateAssignNode(sess, nodeID, shards, prev, actionCount)
+		s.updateAssignNode(sess, nodeID, shards, prev, counter)
 	} else {
-		s.createAssignNode(sess, nodeID, shards, actionCount)
+		s.createAssignNode(sess, nodeID, shards, counter)
 	}
 }
 
-func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, actionCount *int) bool {
+func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, counter *callbackCounter) bool {
 	if err == nil {
 		return false
 	}
 
 	if errors.Is(err, zk.ErrConnectionClosed) {
-		if *actionCount <= 0 {
-			sess.AddRetry(s.listAssignNodes)
-		}
+		counter.addRetry(sess, s.listAssignNodes)
 		return true
 	}
 	if isOneOfErrors(err,
@@ -378,16 +445,17 @@ func isOneOfErrors(err error, errorList ...error) bool {
 func (s *Sharding) updateAssignNode(
 	sess *curator.Session, nodeID string,
 	shards []ShardID, prev assignState,
-	actionCount *int,
+	counter *callbackCounter,
 ) {
 	sess.Run(func(client curator.Client) {
 		pathVal := s.getNodeAssignPath(nodeID)
 		data := marshalAssignNodeData(shards)
 
-		*actionCount++
+		finish := counter.begin()
 		client.Set(pathVal, data, prev.version, func(resp zk.SetResponse, err error) {
-			*actionCount--
-			if s.retryListAssignsIfErr(sess, err, actionCount) {
+			defer finish()
+
+			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
 			s.state.currentAssignMap[nodeID] = assignState{
@@ -400,15 +468,16 @@ func (s *Sharding) updateAssignNode(
 
 func (s *Sharding) createAssignNode(
 	sess *curator.Session, nodeID string,
-	shards []ShardID, actionCount *int,
+	shards []ShardID, counter *callbackCounter,
 ) {
 	sess.Run(func(client curator.Client) {
 		pathVal := s.getNodeAssignPath(nodeID)
 		data := marshalAssignNodeData(shards)
-		*actionCount++
+
+		finish := counter.begin()
 		client.Create(pathVal, data, 0, func(resp zk.CreateResponse, err error) {
-			*actionCount--
-			if s.retryListAssignsIfErr(sess, err, actionCount) {
+			defer finish()
+			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
 			s.state.currentAssignMap[nodeID] = assignState{
@@ -418,14 +487,14 @@ func (s *Sharding) createAssignNode(
 	})
 }
 
-func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, actionCount *int) {
+func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, counter *callbackCounter) {
 	sess.Run(func(client curator.Client) {
 		version := s.state.currentAssignMap[nodeID].version
 
-		*actionCount++
+		finish := counter.begin()
 		client.Delete(s.getAssignsPath()+"/"+nodeID, version, func(resp zk.DeleteResponse, err error) {
-			*actionCount--
-			if s.retryListAssignsIfErr(sess, err, actionCount) {
+			defer finish()
+			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
 			delete(s.state.currentAssignMap, nodeID)
