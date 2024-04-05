@@ -1,7 +1,7 @@
 .PHONY: test build
 
 test:
-	go test -covermode=atomic -coverprofile=coverage.cov ./...
+	go test -count=1 -coverprofile=coverage.cov ./...
 
 build:
 	go build -o bin/run examples/main.go
