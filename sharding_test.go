@@ -1346,7 +1346,7 @@ func TestSharding_Without_Observers__Using_Tester__With_Smaller_Probability(t *t
 }
 
 func TestSharding_Without_Observers__Using_Tester__Many_Times(t *testing.T) {
-	for k := 0; k < 1000; k++ {
+	for k := 0; k < 5000; k++ {
 		store := initStore()
 
 		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
@@ -1374,7 +1374,7 @@ func TestSharding_Without_Observers__Using_Tester__Many_Times(t *testing.T) {
 }
 
 func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob(t *testing.T) {
-	for k := 0; k < 500; k++ {
+	for k := 0; k < 5000; k++ {
 		store := initStore()
 
 		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
@@ -1477,6 +1477,28 @@ func TestSharding_Without_Observers__Using_Tester__With_Error_4(t *testing.T) {
 	tester := curator.NewFakeZookeeperTester(
 		store, []curator.FakeClientID{client1, client2, client3},
 		1712314456540876303,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 10, 1000)
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__With_Error_5(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712314932609040999,
 	)
 
 	tester.Begin()

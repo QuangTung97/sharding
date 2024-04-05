@@ -386,6 +386,11 @@ func (s *Sharding) updateIfChanged(
 
 	// No Change
 	addToAllocated(current)
+	oldShards = slices.Clone(oldShards)
+	slices.Sort(oldShards)
+	if !slices.Equal(oldShards, current) {
+		s.upsertAssigns(sess, nodeID, current, counter)
+	}
 }
 
 func marshalAssignNodeData(shards []ShardID) []byte {
