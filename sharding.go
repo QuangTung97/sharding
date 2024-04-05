@@ -178,12 +178,16 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, count
 			if err := json.Unmarshal(resp.Data, &assign); err != nil {
 				panic(err)
 			}
-			s.state.currentAssignMap[nodeID] = assignState{
-				version: resp.Stat.Version,
-				shards:  assign.Shards,
-			}
+			s.putNodeAssignState(nodeID, resp.Stat.Version, assign.Shards)
 		})
 	})
+}
+
+func (s *Sharding) putNodeAssignState(nodeID string, version int32, shards []ShardID) {
+	s.state.currentAssignMap[nodeID] = assignState{
+		version: version,
+		shards:  shards,
+	}
 }
 
 func (s *Sharding) startHandleNodeChanges(sess *curator.Session) {
@@ -260,18 +264,50 @@ func (s *Sharding) listActiveNodes(sess *curator.Session) {
 	})
 }
 
-func (s *Sharding) handleNodesChanged(sess *curator.Session) {
-	n := ShardID(len(s.state.nodes))
-	minShardsPerNode := s.numShards / n
-	maxShardsPerNode := (s.numShards + n - 1) / n
-	numMax := s.numShards - minShardsPerNode*n
-
+func (s *Sharding) getNodesSorted() []string {
 	nodes := slices.Clone(s.state.nodes)
 	slices.SortStableFunc(nodes, func(a, b string) int {
 		assignA := s.state.currentAssignMap[a].shards
 		assignB := s.state.currentAssignMap[b].shards
 		return len(assignB) - len(assignA)
 	})
+	return nodes
+}
+
+func (s *Sharding) removeDuplicated() {
+	nodes := s.getNodesSorted()
+	existedShards := map[ShardID]struct{}{}
+
+	for _, n := range nodes {
+		old, ok := s.state.currentAssignMap[n]
+		if !ok {
+			continue
+		}
+
+		newList := make([]ShardID, 0, len(old.shards))
+		for _, id := range old.shards {
+			_, existed := existedShards[id]
+			if existed {
+				continue
+			}
+			existedShards[id] = struct{}{}
+			newList = append(newList, id)
+		}
+
+		old.shards = newList
+		s.state.currentAssignMap[n] = old
+	}
+}
+
+func (s *Sharding) handleNodesChanged(sess *curator.Session) {
+	n := ShardID(len(s.state.nodes))
+	minShardsPerNode := s.numShards / n
+	maxShardsPerNode := (s.numShards + n - 1) / n
+	numMax := s.numShards - minShardsPerNode*n
+
+	s.removeDuplicated()
+	nodes := s.getNodesSorted()
+
 	nodeSet := map[string]struct{}{}
 	for _, nodeID := range nodes {
 		nodeSet[nodeID] = struct{}{}
@@ -329,14 +365,14 @@ func (s *Sharding) updateIfChanged(
 		for _, id := range current[expectLen:] {
 			freeShards[id] = struct{}{}
 		}
-		current = current[:expectLen]
+		current = slices.Clone(current[:expectLen])
 		s.upsertAssigns(sess, nodeID, current, counter)
 		return
 	}
 	if len(current) < expectLen {
 		list := freeShardsToList(freeShards)
 		missing := expectLen - len(current)
-		current = append(current, list[:missing]...)
+		current = slices.Clone(append(current, list[:missing]...))
 		for _, id := range list[:missing] {
 			delete(freeShards, id)
 		}
@@ -414,10 +450,7 @@ func (s *Sharding) updateAssignNode(
 			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
-			s.state.currentAssignMap[nodeID] = assignState{
-				version: resp.Stat.Version,
-				shards:  shards,
-			}
+			s.putNodeAssignState(nodeID, resp.Stat.Version, shards)
 		})
 	})
 }
@@ -436,9 +469,7 @@ func (s *Sharding) createAssignNode(
 			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
-			s.state.currentAssignMap[nodeID] = assignState{
-				shards: shards,
-			}
+			s.putNodeAssignState(nodeID, 0, shards)
 		})
 	})
 }
