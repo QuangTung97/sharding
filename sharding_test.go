@@ -1,8 +1,11 @@
 package sharding
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/QuangTung97/zk"
 	"github.com/QuangTung97/zk/curator"
@@ -54,6 +57,7 @@ func startSharding(
 ) *Sharding {
 	factory := curator.NewFakeClientFactory(store, client)
 	s := New(parentPath, nodeID, numShards, fmt.Sprintf("%s-addr:4001", nodeID), options...)
+	s.clientID = client
 	factory.Start(s.GetCurator())
 	return s
 }
@@ -272,8 +276,6 @@ func TestSharding_Three_Nodes__Lease_Expired(t *testing.T) {
 
 	// Leader Expired
 	store.SessionExpired(client1)
-
-	store.ChildrenApply(client1)
 	assert.Equal(t, []string{}, store.PendingCalls(client1))
 
 	// Lock Granted for Client 2
@@ -285,6 +287,9 @@ func TestSharding_Three_Nodes__Lease_Expired(t *testing.T) {
 	store.GetApply(client2)
 	store.GetApply(client2)
 	store.GetApply(client2)
+
+	store.PrintData()
+	store.PrintPendingCalls()
 
 	store.SetApply(client2)
 	store.SetApply(client2)
@@ -386,7 +391,6 @@ func TestSharding_Get_Assign_Node_Data_Conn_Error(t *testing.T) {
 	store.CreateApply(client1)
 
 	store.SessionExpired(client1)
-	store.ChildrenApply(client1)
 
 	// Start Client2
 	startSharding(store, client2, "node02")
@@ -440,7 +444,6 @@ func TestSharding_Get_Assign_Data_Of_Two_Nodes__Conn_Error(t *testing.T) {
 
 	// session expired
 	store.SessionExpired(client1)
-	store.ChildrenApply(client1)
 
 	// Client 2 Granted
 	store.ChildrenApply(client2)
@@ -487,7 +490,6 @@ func TestSharding_Create_And_Delete_With_Conn_Error(t *testing.T) {
 	store.CreateApply(client1)
 
 	store.SessionExpired(client1)
-	store.ChildrenApply(client1)
 
 	// Start Client2
 	startSharding(store, client2, "node02")
@@ -542,7 +544,6 @@ func TestSharding__Set_Conn_Error(t *testing.T) {
 
 	// session expired
 	store.SessionExpired(client1)
-	store.ChildrenApply(client1)
 
 	// Client 2 Granted
 	store.ChildrenApply(client2)
@@ -1291,4 +1292,141 @@ func TestSharding_Observer_3_Nodes_One_Node_Expired_When_Getting_Data_With_Watch
 
 	assert.Equal(t, 1, len(events))
 	assert.Equal(t, 0, len(store.PendingCalls(client3)))
+}
+
+func TestSharding_Without_Observers__Using_Tester(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(store, []curator.FakeClientID{client1, client2, client3}, 123)
+
+	tester.Begin()
+
+	steps := tester.RunSessionExpiredAndConnectionError(
+		20,
+		20,
+		1000,
+	)
+	assert.Equal(t, 1000, steps)
+
+	steps = tester.RunSessionExpiredAndConnectionError(
+		0,
+		0,
+		1000_000,
+	)
+	assert.Equal(t, 35, steps)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+}
+
+func TestSharding_Without_Observers__Using_Tester__With_Smaller_Probability(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		123,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 10, 10_000)
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__Many_Times(t *testing.T) {
+	for k := 0; k < 100; k++ {
+		store := initStore()
+
+		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+		startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+		startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+		seed := time.Now().UnixNano()
+		fmt.Println("SEED:", seed)
+
+		tester := curator.NewFakeZookeeperTester(
+			store, []curator.FakeClientID{client1, client2, client3},
+			seed,
+		)
+
+		tester.Begin()
+		runTesterWithExactSteps(tester, 10, 1000)
+		runTesterWithoutErrors(tester)
+
+		assert.Equal(t, 0, len(store.PendingCalls(client1)))
+		assert.Equal(t, 0, len(store.PendingCalls(client2)))
+		assert.Equal(t, 0, len(store.PendingCalls(client3)))
+
+		checkFinalShards(t, store)
+	}
+}
+
+func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
+	assign := store.Root.Children[0].Children[2]
+	assert.Equal(t, "assigns", assign.Name)
+
+	var nodes []string
+	var shards []ShardID
+	for _, child := range assign.Children {
+		nodes = append(nodes, child.Name)
+
+		var d assignData
+		err := json.Unmarshal(child.Data, &d)
+		if err != nil {
+			panic(err)
+		}
+		shards = append(shards, d.Shards...)
+	}
+
+	slices.Sort(nodes)
+	assert.Equal(t, []string{"node01", "node02", "node03"}, nodes)
+
+	slices.Sort(shards)
+	assert.Equal(t, []ShardID{0, 1, 2, 3, 4, 5, 6, 7}, shards)
+}
+
+func runTesterWithExactSteps(
+	tester *curator.FakeZookeeperTester,
+	prob float64, exactSteps int,
+) {
+	remainSteps := exactSteps
+	for remainSteps > 0 {
+		steps := tester.RunSessionExpiredAndConnectionError(
+			prob,
+			prob,
+			remainSteps,
+		)
+		remainSteps -= steps
+	}
+}
+
+func runTesterWithoutErrors(tester *curator.FakeZookeeperTester) {
+	tester.RunSessionExpiredAndConnectionError(
+		0, 0,
+		1000_000,
+	)
+}
+
+type noopLogger struct {
+}
+
+func (*noopLogger) Infof(format string, args ...any) {
+}
+
+func (*noopLogger) Warnf(format string, args ...any) {
+}
+
+func (*noopLogger) Errorf(format string, args ...any) {
 }
