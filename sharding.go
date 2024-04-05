@@ -169,6 +169,7 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, getRe
 					return
 				}
 				if errors.Is(err, zk.ErrNoNode) {
+					s.listAssignNodes(sess)
 					return
 				}
 				panic(err)
@@ -346,23 +347,30 @@ func (s *Sharding) upsertAssigns(
 }
 
 func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, actionCount *int) bool {
-	if err != nil {
-		if errors.Is(err, zk.ErrConnectionClosed) {
-			if *actionCount <= 0 {
-				sess.AddRetry(s.listAssignNodes)
-			}
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, zk.ErrConnectionClosed) {
+		if *actionCount <= 0 {
+			sess.AddRetry(s.listAssignNodes)
+		}
+		return true
+	}
+	if isOneOfErrors(err,
+		zk.ErrBadVersion, zk.ErrNodeExists, zk.ErrNoNode,
+	) {
+		s.listAssignNodes(sess)
+		return true
+	}
+	panic(err)
+}
+
+func isOneOfErrors(err error, errorList ...error) bool {
+	for _, cmpErr := range errorList {
+		if errors.Is(err, cmpErr) {
 			return true
 		}
-		if errors.Is(err, zk.ErrBadVersion) {
-			return false
-		}
-		if errors.Is(err, zk.ErrNodeExists) {
-			return false
-		}
-		if errors.Is(err, zk.ErrNoNode) {
-			return false
-		}
-		panic(err)
 	}
 	return false
 }

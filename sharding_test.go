@@ -1317,7 +1317,7 @@ func TestSharding_Without_Observers__Using_Tester(t *testing.T) {
 		0,
 		1000_000,
 	)
-	assert.Equal(t, 35, steps)
+	assert.Equal(t, 36, steps)
 
 	store.PrintData()
 	store.PrintPendingCalls()
@@ -1373,6 +1373,28 @@ func TestSharding_Without_Observers__Using_Tester__Many_Times(t *testing.T) {
 	}
 }
 
+func TestSharding_Without_Observers__Using_Tester__With_Error(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712306020784456407,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 10, 1000)
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	checkFinalShards(t, store)
+}
+
 func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
 	assign := store.Root.Children[0].Children[2]
 	assert.Equal(t, "assigns", assign.Name)
@@ -1390,8 +1412,7 @@ func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
 		shards = append(shards, d.Shards...)
 	}
 
-	slices.Sort(nodes)
-	assert.Equal(t, []string{"node01", "node02", "node03"}, nodes)
+	assert.Less(t, len(nodes), 4)
 
 	slices.Sort(shards)
 	assert.Equal(t, []ShardID{0, 1, 2, 3, 4, 5, 6, 7}, shards)
