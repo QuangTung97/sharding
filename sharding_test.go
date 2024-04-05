@@ -242,10 +242,10 @@ func TestSharding_Three_Nodes_One_Node_Deleted(t *testing.T) {
 	assert.Equal(t, 2, len(children))
 
 	assert.Equal(t, "node01", children[0].Name)
-	assert.Equal(t, `{"shards":[0,1,2,6]}`, string(children[0].Data))
+	assert.Equal(t, `{"shards":[0,1,2,3]}`, string(children[0].Data))
 
 	assert.Equal(t, "node02", children[1].Name)
-	assert.Equal(t, `{"shards":[3,4,5,7]}`, string(children[1].Data))
+	assert.Equal(t, `{"shards":[4,5,6,7]}`, string(children[1].Data))
 }
 
 func TestSharding_Three_Nodes__Lease_Expired(t *testing.T) {
@@ -1437,6 +1437,50 @@ func TestSharding_Without_Observers__Using_Tester__With_Error_2(t *testing.T) {
 
 	tester.Begin()
 	runTesterWithExactSteps(tester, 5, 1000)
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__With_Error_3(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712312244036663379,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 10, 1000)
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__With_Error_4(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712314456540876303,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 10, 1000)
 	runTesterWithoutErrors(tester)
 
 	store.PrintData()
