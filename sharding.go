@@ -168,7 +168,6 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, count
 					return
 				}
 				if errors.Is(err, zk.ErrNoNode) {
-					s.listAssignNodes(sess)
 					return
 				}
 				panic(err)
@@ -186,7 +185,7 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, count
 func (s *Sharding) putNodeAssignState(nodeID string, version int32, shards []ShardID) {
 	old := s.state.currentAssignMap[nodeID]
 	if old.version > version {
-		panic("SOME ERROR")
+		panic("out of order responses")
 	}
 
 	s.state.currentAssignMap[nodeID] = assignState{
@@ -431,7 +430,6 @@ func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, count
 	if isOneOfErrors(err,
 		zk.ErrBadVersion, zk.ErrNodeExists, zk.ErrNoNode,
 	) {
-		s.listAssignNodes(sess)
 		return true
 	}
 	panic(err)
