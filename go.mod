@@ -4,6 +4,7 @@ go 1.21.2
 
 require (
 	github.com/QuangTung97/zk v0.1.1-0.20240405065155-7a1ff0e64956
+	github.com/mgechev/revive v1.3.7
 	github.com/stretchr/testify v1.9.0
 )
 
@@ -17,7 +18,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mgechev/dots v0.0.0-20210922191527-e955255bf517 // indirect
-	github.com/mgechev/revive v1.3.7 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
