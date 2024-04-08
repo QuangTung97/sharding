@@ -195,6 +195,39 @@ func TestSharding_With_Observer_With_Very_Low_Probability__Multi_Times(t *testin
 	}
 }
 
+func TestSharding_With_Observer_With_High_Probability__4_Nodes__Multi_Times(t *testing.T) {
+	for k := 0; k < 1000; k++ {
+		store := initStore()
+
+		var lastEvent ChangeEvent
+
+		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+		startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+		startSharding(store, client3, "node03",
+			WithLogger(&noopLogger{}),
+			WithShardingObserver(func(event ChangeEvent) {
+				lastEvent = event
+			}),
+		)
+		startSharding(store, client4, "node04", WithLogger(&noopLogger{}))
+
+		seed := time.Now().UnixNano()
+		fmt.Println("SEED:", seed)
+
+		tester := curator.NewFakeZookeeperTester(
+			store, []curator.FakeClientID{client1, client2, client3, client4},
+			seed,
+		)
+
+		tester.Begin()
+		runTesterWithExactSteps(tester, 16, 2000)
+		runTesterWithoutErrors(tester)
+
+		checkFinalShards(t, store)
+		checkObserverShards(t, store, lastEvent)
+	}
+}
+
 func checkObserverShards(t *testing.T, store *curator.FakeZookeeper, lastEvent ChangeEvent) {
 	var shards []ShardID
 	eventAlloc := map[string][]ShardID{}
