@@ -10,6 +10,7 @@ const (
 	assignZNodeName = "/assigns"
 )
 
+// ShardID for shard if from zero
 type ShardID uint32
 
 type nodeData struct {
