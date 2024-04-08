@@ -643,10 +643,12 @@ func TestSharding_WithObserver_SingleNode__Then_New_Node_Added(t *testing.T) {
 	store.CreateApply(client1)
 
 	assert.Equal(t, 0, len(events))
-
 	// list assigns again
 	store.ChildrenApply(client1)
+
+	assert.Equal(t, 0, len(events))
 	store.GetApply(client1)
+	assert.Equal(t, 1, len(events))
 
 	assert.Equal(t, []ChangeEvent{
 		{
@@ -672,17 +674,17 @@ func TestSharding_WithObserver_SingleNode__Then_New_Node_Added(t *testing.T) {
 	store.ChildrenApply(client1) // list children after event notified of observer
 	store.ChildrenApply(client1) // list children for sharding
 
-	store.GetApply(client1)
+	store.GetApply(client1) // get nodes/node02
 
 	store.SetApply(client1)
 	store.CreateApply(client1)
 
 	store.GetApply(client1)
-	assert.Equal(t, 1, len(events))
 	store.ChildrenApply(client1) // list children for assigns of observer
 
 	assert.Equal(t, 1, len(events))
 	store.GetApply(client1) // get assigns/node02
+	assert.Equal(t, 2, len(events))
 	assert.Equal(t, ChangeEvent{
 		Old: []Node{
 			{

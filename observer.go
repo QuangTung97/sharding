@@ -122,6 +122,7 @@ func (c *observerCore) handleNodesChildren(sess *curator.Session, resp zk.Childr
 	for _, tmpNode := range resp.Children {
 		node := tmpNode
 		n := c.getNode(node)
+		// fmt.Println("GET NODE:", node, n.data.Address)
 		if len(n.data.Address) > 0 {
 			continue
 		}
@@ -136,6 +137,7 @@ func (c *observerCore) handleNodesChildren(sess *curator.Session, resp zk.Childr
 func (c *observerCore) getNodeData(sess *curator.Session, node string) {
 	sess.Run(func(client curator.Client) {
 		client.Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
+			// fmt.Println("GET NODE RESPONSE:", node, string(resp.Data), err)
 			if err != nil {
 				if errors.Is(err, zk.ErrConnectionClosed) {
 					sess.AddRetry(func(sess *curator.Session) {
@@ -174,6 +176,7 @@ func (c *observerCore) handleAssignsChildren(sess *curator.Session, resp zk.Chil
 	for _, tmpNode := range resp.Children {
 		child := tmpNode
 		n := c.getNode(child)
+		// fmt.Println("TRY TO GET ASSIGN:", child)
 		if n.mzxid > 0 {
 			continue
 		}
@@ -257,12 +260,28 @@ func (c *observerCore) notifyObserver() {
 	})
 
 	oldList := c.oldNotify
-	c.oldNotify = newList
+	if slices.EqualFunc(oldList, newList, nodeEqual) {
+		return
+	}
 
+	c.oldNotify = newList
 	c.observerFunc(ChangeEvent{
 		Old: oldList,
 		New: newList,
 	})
+}
+
+func nodeEqual(a, b Node) bool {
+	if a.ID != b.ID {
+		return false
+	}
+	if a.Address != b.Address {
+		return false
+	}
+	if a.MZxid != b.MZxid {
+		return false
+	}
+	return slices.Equal(a.Shards, b.Shards)
 }
 
 func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
@@ -284,6 +303,9 @@ func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 		}, func(ev zk.Event) {
 			if ev.Type == zk.EventNodeDataChanged {
 				c.getAssignNode(sess, nodeID)
+			} else if ev.Type == zk.EventNodeDeleted {
+				n := c.getNode(nodeID)
+				n.mzxid = 0
 			}
 		})
 	})
@@ -296,6 +318,7 @@ func (c *observerCore) handleGetAssignData(nodeID string, resp zk.GetResponse) {
 	if err := json.Unmarshal(resp.Data, &assignVal); err != nil {
 		panic(err)
 	}
+	// fmt.Println("HANDLE ASSIGN:", nodeID, resp.Stat.Mzxid, assignVal.Shards)
 	n.shards = assignVal.Shards
 	c.notifyObserver()
 }
@@ -317,4 +340,5 @@ func (c *observerCore) handleNodeData(nodeID string, resp zk.GetResponse) {
 	}
 	n := c.getNode(nodeID)
 	n.data = data
+	c.notifyObserver()
 }
