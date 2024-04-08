@@ -35,9 +35,9 @@ type observerCore struct {
 	numShards    ShardID
 	observerFunc ObserverFunc
 
+	// state data
 	oldNotify []Node
-
-	nodes map[string]*observerNodeData
+	nodes     map[string]*observerNodeData
 }
 
 func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc) *observerCore {
@@ -45,12 +45,16 @@ func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc
 		parent:       parent,
 		numShards:    numShards,
 		observerFunc: observerFunc,
-
-		nodes: map[string]*observerNodeData{},
 	}
 }
 
+func (c *observerCore) initState() {
+	c.oldNotify = nil
+	c.nodes = map[string]*observerNodeData{}
+}
+
 func (c *observerCore) onStart(sess *curator.Session) {
+	c.initState()
 	c.listNodes(sess)
 	c.listAssigns(sess)
 }

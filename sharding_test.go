@@ -21,6 +21,8 @@ func TestNewNodeID(t *testing.T) {
 const client1 curator.FakeClientID = "client1"
 const client2 curator.FakeClientID = "client2"
 const client3 curator.FakeClientID = "client3"
+const client4 curator.FakeClientID = "client4"
+
 const initClient curator.FakeClientID = "init"
 
 const parentPath = "/sharding"
@@ -1401,6 +1403,36 @@ func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob(t *tes
 	}
 }
 
+func TestSharding_Without_Observers__Using_Tester__Many_Times__With_4_Nodes__Lower_Prob(t *testing.T) {
+	for k := 0; k < 1000; k++ {
+		store := initStore()
+
+		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+		startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+		startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+		startSharding(store, client4, "node04", WithLogger(&noopLogger{}))
+
+		seed := time.Now().UnixNano()
+		fmt.Println("SEED:", seed)
+
+		tester := curator.NewFakeZookeeperTester(
+			store, []curator.FakeClientID{client1, client2, client3, client4},
+			seed,
+		)
+
+		tester.Begin()
+		runTesterWithExactSteps(tester, 3, 1000)
+		runTesterWithoutErrors(tester)
+
+		assert.Equal(t, 0, len(store.PendingCalls(client1)))
+		assert.Equal(t, 0, len(store.PendingCalls(client2)))
+		assert.Equal(t, 0, len(store.PendingCalls(client3)))
+		assert.Equal(t, 0, len(store.PendingCalls(client4)))
+
+		checkFinalShards(t, store)
+	}
+}
+
 func TestSharding_Without_Observers__Using_Tester__With_Error(t *testing.T) {
 	store := initStore()
 
@@ -1528,7 +1560,7 @@ func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
 		shards = append(shards, d.Shards...)
 	}
 
-	assert.Less(t, len(nodes), 4)
+	assert.Less(t, len(nodes), 5)
 
 	slices.Sort(shards)
 	assert.Equal(t, []ShardID{0, 1, 2, 3, 4, 5, 6, 7}, shards)
