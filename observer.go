@@ -35,9 +35,9 @@ type observerCore struct {
 	numShards    ShardID
 	observerFunc ObserverFunc
 
+	// state data
 	oldNotify []Node
-
-	nodes map[string]*observerNodeData
+	nodes     map[string]*observerNodeData
 }
 
 func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc) *observerCore {
@@ -45,12 +45,16 @@ func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc
 		parent:       parent,
 		numShards:    numShards,
 		observerFunc: observerFunc,
-
-		nodes: map[string]*observerNodeData{},
 	}
 }
 
+func (c *observerCore) initState() {
+	c.oldNotify = nil
+	c.nodes = map[string]*observerNodeData{}
+}
+
 func (c *observerCore) onStart(sess *curator.Session) {
+	c.initState()
 	c.listNodes(sess)
 	c.listAssigns(sess)
 }
@@ -253,12 +257,28 @@ func (c *observerCore) notifyObserver() {
 	})
 
 	oldList := c.oldNotify
-	c.oldNotify = newList
+	if slices.EqualFunc(oldList, newList, nodeEqual) {
+		return
+	}
 
+	c.oldNotify = newList
 	c.observerFunc(ChangeEvent{
 		Old: oldList,
 		New: newList,
 	})
+}
+
+func nodeEqual(a, b Node) bool {
+	if a.ID != b.ID {
+		return false
+	}
+	if a.Address != b.Address {
+		return false
+	}
+	if a.MZxid != b.MZxid {
+		return false
+	}
+	return slices.Equal(a.Shards, b.Shards)
 }
 
 func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
@@ -280,6 +300,9 @@ func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 		}, func(ev zk.Event) {
 			if ev.Type == zk.EventNodeDataChanged {
 				c.getAssignNode(sess, nodeID)
+			} else if ev.Type == zk.EventNodeDeleted {
+				n := c.getNode(nodeID)
+				n.mzxid = 0
 			}
 		})
 	})
@@ -313,4 +336,5 @@ func (c *observerCore) handleNodeData(nodeID string, resp zk.GetResponse) {
 	}
 	n := c.getNode(nodeID)
 	n.data = data
+	c.notifyObserver()
 }
