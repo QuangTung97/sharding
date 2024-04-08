@@ -12,6 +12,7 @@ import (
 	"github.com/QuangTung97/zk/curator"
 )
 
+// Sharding ...
 type Sharding struct {
 	parentPath string
 	nodeID     string
@@ -49,6 +50,7 @@ type sessionState struct {
 	listActiveNodesCompleted bool
 }
 
+// NewNodeID creates a random node id with hex encoding and length = 16 bytes
 func NewNodeID() string {
 	var data [16]byte
 	_, err := rand.Reader.Read(data[:])
@@ -58,6 +60,7 @@ func NewNodeID() string {
 	return hex.EncodeToString(data[:])
 }
 
+// New creates a Sharding object
 func New(
 	parentPath string, nodeID string,
 	numShards ShardID, nodeAddr string,
@@ -499,6 +502,7 @@ func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, counte
 	})
 }
 
+// GetCurator is used for input of the curator.Client.Start() method
 func (s *Sharding) GetCurator() *curator.Curator {
 	return s.cur
 }

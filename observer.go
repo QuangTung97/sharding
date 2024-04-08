@@ -10,6 +10,7 @@ import (
 	"github.com/QuangTung97/zk/curator"
 )
 
+// Node information when observing changes
 type Node struct {
 	ID      string
 	Address string
@@ -17,11 +18,13 @@ type Node struct {
 	MZxid   int64 // updated zxid
 }
 
+// ChangeEvent happens every time zookeeper state changed
 type ChangeEvent struct {
 	Old []Node
 	New []Node
 }
 
+// ObserverFunc is the callback function of observer
 type ObserverFunc func(event ChangeEvent)
 
 type observerNodeData struct {
@@ -49,7 +52,6 @@ func newObserverCore(parent string, numShards ShardID, observerFunc ObserverFunc
 }
 
 func (c *observerCore) initState() {
-	c.oldNotify = nil
 	c.nodes = map[string]*observerNodeData{}
 }
 
@@ -261,7 +263,7 @@ func (c *observerCore) notifyObserver() {
 		return
 	}
 
-	c.oldNotify = newList
+	c.oldNotify = slices.Clone(newList)
 	c.observerFunc(ChangeEvent{
 		Old: oldList,
 		New: newList,
@@ -281,6 +283,7 @@ func nodeEqual(a, b Node) bool {
 	return slices.Equal(a.Shards, b.Shards)
 }
 
+//revive:disable-next-line:cognitive-complexity
 func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 	sess.Run(func(client curator.Client) {
 		client.GetW(c.parent+assignZNodeName+"/"+nodeID, func(resp zk.GetResponse, err error) {

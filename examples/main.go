@@ -10,6 +10,7 @@ import (
 	"github.com/QuangTung97/sharding"
 )
 
+// WatchChange callback function
 func WatchChange(event sharding.ChangeEvent) {
 	fmt.Println("------------------------------------------")
 	for _, node := range event.New {
