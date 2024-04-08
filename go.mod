@@ -3,7 +3,7 @@ module github.com/QuangTung97/sharding
 go 1.21.2
 
 require (
-	github.com/QuangTung97/zk v0.1.1-0.20240405065155-7a1ff0e64956
+	github.com/QuangTung97/zk v0.1.1-0.20240408073726-93fa53989200
 	github.com/mgechev/revive v1.3.7
 	github.com/stretchr/testify v1.9.0
 )
