@@ -29,19 +29,26 @@ type ObserverFunc func(event ChangeEvent)
 
 // Observer is for standalone observer, without participating on sharding allocation
 type Observer struct {
-	core *observerCore
+	curator *curator.Curator
 }
 
-// NewObserver creates an Observer TODO using container node controller
+// NewObserver creates an Observer
 func NewObserver(parentPath string, numShards ShardID, observerFunc ObserverFunc) *Observer {
+	controller := newContainerNodeController(parentPath, "", "")
+	core := newObserverCore(parentPath, numShards, observerFunc)
 	return &Observer{
-		core: newObserverCore(parentPath, numShards, observerFunc),
+		curator: curator.NewChain(
+			controller.onStart,
+			func(sess *curator.Session, _ func(sess *curator.Session)) {
+				core.onStart(sess)
+			},
+		),
 	}
 }
 
-// OnStart should be used as the argument of curator.New
-func (o *Observer) OnStart(sess *curator.Session) {
-	o.core.onStart(sess)
+// GetCurator ...
+func (o *Observer) GetCurator() *curator.Curator {
+	return o.curator
 }
 
 // ========================================

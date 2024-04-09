@@ -23,6 +23,8 @@ const client2 curator.FakeClientID = "client2"
 const client3 curator.FakeClientID = "client3"
 const client4 curator.FakeClientID = "client4"
 
+const observer1 curator.FakeClientID = "observer1"
+
 const initClient curator.FakeClientID = "init"
 
 const parentPath = "/sharding"

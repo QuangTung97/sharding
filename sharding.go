@@ -520,7 +520,12 @@ func (c *containerNodeController) createInitNodes(sess *curator.Session) {
 	})
 
 	sessMustCreatePersistence(sess, c.getNodesPath(), func(resp zk.CreateResponse) {
-		c.createEphemeralNode(sess)
+		if len(c.nodeID) > 0 {
+			c.createEphemeralNode(sess)
+		} else {
+			c.state.nodesCreated = true
+			c.createCompleted(sess)
+		}
 	})
 
 	sessMustCreatePersistence(sess, c.getAssignsPath(), func(resp zk.CreateResponse) {

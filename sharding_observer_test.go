@@ -285,3 +285,66 @@ func checkObserverShards(t *testing.T, store *curator.FakeZookeeper, lastEvent C
 
 	assert.Equal(t, storeAlloc, eventAlloc)
 }
+
+func TestStandaloneObserver_2_Nodes(t *testing.T) {
+	store := initStore()
+	var events []ChangeEvent
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+
+	factory := curator.NewFakeClientFactory(store, observer1)
+	observer := NewObserver(parentPath, numShards, func(event ChangeEvent) {
+		events = append(events, event)
+	})
+	factory.Start(observer.GetCurator())
+
+	store.Begin(client1)
+	store.Begin(client2)
+	store.Begin(observer1)
+
+	initContainerNodes(store, client1)
+	initContainerNodes(store, client2)
+
+	store.CreateApply(observer1) // create lock
+	store.CreateApply(observer1) // create nodes
+	store.CreateApply(observer1) // create assigns
+
+	lockGranted(store, client1)
+	lockBlocked(store, client2)
+
+	store.ChildrenApply(client1)
+	store.ChildrenApply(client1)
+	store.CreateApply(client1)
+	store.CreateApply(client1)
+
+	store.ChildrenApply(observer1)
+	store.ChildrenApply(observer1)
+
+	store.GetApply(observer1)
+	store.GetApply(observer1)
+	store.GetApply(observer1)
+
+	assert.Equal(t, 0, len(events))
+	store.GetApply(observer1)
+	assert.Equal(t, 1, len(events))
+	assert.Equal(t, ChangeEvent{
+		New: []Node{
+			{
+				ID:      "node01",
+				Address: "node01-addr:4001",
+				Shards:  []ShardID{0, 1, 2, 3},
+				MZxid:   109,
+			},
+			{
+				ID:      "node02",
+				Address: "node02-addr:4001",
+				Shards:  []ShardID{4, 5, 6, 7},
+				MZxid:   110,
+			},
+		},
+	}, events[0])
+
+	store.PrintData()
+	store.PrintPendingCalls()
+}
