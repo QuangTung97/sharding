@@ -62,10 +62,10 @@ func New(
 	options ...Option,
 ) *Sharding {
 	if len(nodeID) == 0 {
-		panic("Invalid node id") // TODO Testing
+		panic("Invalid node id")
 	}
 	if len(nodeAddr) == 0 {
-		panic("Invalid node address") // TODO Testing
+		panic("Invalid node address")
 	}
 
 	s := &Sharding{

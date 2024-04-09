@@ -64,6 +64,20 @@ func startSharding(
 	return s
 }
 
+func TestSharding_New_Errors(t *testing.T) {
+	t.Run("node id empty", func(t *testing.T) {
+		assert.PanicsWithValue(t, "Invalid node id", func() {
+			New(parentPath, "", 4, "")
+		})
+	})
+
+	t.Run("node addr empty", func(t *testing.T) {
+		assert.PanicsWithValue(t, "Invalid node address", func() {
+			New(parentPath, "node01", 4, "")
+		})
+	})
+}
+
 func TestSharding_Begin(t *testing.T) {
 	store := initStore()
 

@@ -32,7 +32,7 @@ type Observer struct {
 	core *observerCore
 }
 
-// NewObserver creates an Observer
+// NewObserver creates an Observer TODO using container node controller
 func NewObserver(parentPath string, numShards ShardID, observerFunc ObserverFunc) *Observer {
 	return &Observer{
 		core: newObserverCore(parentPath, numShards, observerFunc),
