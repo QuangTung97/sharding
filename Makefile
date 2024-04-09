@@ -1,4 +1,4 @@
-.PHONY: test build lint coverage install-tools
+.PHONY: test build lint coverage install-tools test-raw
 
 test:
 	go test -count=1 -coverprofile=coverage.out ./...
@@ -16,3 +16,6 @@ coverage:
 
 install-tools:
 	go install github.com/mgechev/revive
+
+test-raw:
+	go test -count=1 ./...

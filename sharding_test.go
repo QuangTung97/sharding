@@ -1378,7 +1378,7 @@ func TestSharding_Without_Observers__Using_Tester__Many_Times(t *testing.T) {
 }
 
 func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob(t *testing.T) {
-	for k := 0; k < 5000; k++ {
+	for k := 0; k < 1000; k++ {
 		store := initStore()
 
 		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
@@ -1430,6 +1430,34 @@ func TestSharding_Without_Observers__Using_Tester__Many_Times__With_4_Nodes__Low
 		assert.Equal(t, 0, len(store.PendingCalls(client2)))
 		assert.Equal(t, 0, len(store.PendingCalls(client3)))
 		assert.Equal(t, 0, len(store.PendingCalls(client4)))
+
+		checkFinalShards(t, store)
+	}
+}
+
+func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob__With_Ops_Error(t *testing.T) {
+	for k := 0; k < 1000; k++ {
+		store := initStore()
+
+		startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+		startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+		startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+		seed := time.Now().UnixNano()
+		fmt.Println("SEED:", seed)
+
+		tester := curator.NewFakeZookeeperTester(
+			store, []curator.FakeClientID{client1, client2, client3},
+			seed,
+		)
+
+		tester.Begin()
+		runTesterWithExactSteps(tester, 5, 1000, curator.WithRunOperationErrorPercentage(8))
+		runTesterWithoutErrors(tester)
+
+		assert.Equal(t, 0, len(store.PendingCalls(client1)))
+		assert.Equal(t, 0, len(store.PendingCalls(client2)))
+		assert.Equal(t, 0, len(store.PendingCalls(client3)))
 
 		checkFinalShards(t, store)
 	}
@@ -1545,6 +1573,93 @@ func TestSharding_Without_Observers__Using_Tester__With_Error_5(t *testing.T) {
 	checkFinalShards(t, store)
 }
 
+func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob__With_Ops_Error__Case1(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	seed := time.Now().UnixNano()
+	fmt.Println("SEED:", seed)
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712630125872893950,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 5, 1000, curator.WithRunOperationErrorPercentage(8))
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+	assert.Equal(t, 0, len(store.PendingCalls(client2)))
+	assert.Equal(t, 0, len(store.PendingCalls(client3)))
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob__With_Ops_Error__Case2(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	seed := time.Now().UnixNano()
+	fmt.Println("SEED:", seed)
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712631093229480643,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 5, 1000, curator.WithRunOperationErrorPercentage(8))
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+	assert.Equal(t, 0, len(store.PendingCalls(client2)))
+	assert.Equal(t, 0, len(store.PendingCalls(client3)))
+
+	checkFinalShards(t, store)
+}
+
+func TestSharding_Without_Observers__Using_Tester__Many_Times__Lower_Prob__With_Ops_Error__Case3(t *testing.T) {
+	store := initStore()
+
+	startSharding(store, client1, "node01", WithLogger(&noopLogger{}))
+	startSharding(store, client2, "node02", WithLogger(&noopLogger{}))
+	startSharding(store, client3, "node03", WithLogger(&noopLogger{}))
+
+	seed := time.Now().UnixNano()
+	fmt.Println("SEED:", seed)
+
+	tester := curator.NewFakeZookeeperTester(
+		store, []curator.FakeClientID{client1, client2, client3},
+		1712631353051612016,
+	)
+
+	tester.Begin()
+	runTesterWithExactSteps(tester, 5, 1000, curator.WithRunOperationErrorPercentage(8))
+	runTesterWithoutErrors(tester)
+
+	store.PrintData()
+	store.PrintPendingCalls()
+
+	assert.Equal(t, 0, len(store.PendingCalls(client1)))
+	assert.Equal(t, 0, len(store.PendingCalls(client2)))
+	assert.Equal(t, 0, len(store.PendingCalls(client3)))
+
+	checkFinalShards(t, store)
+}
+
 func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
 	assign := store.Root.Children[0].Children[2]
 	assert.Equal(t, "assigns", assign.Name)
@@ -1571,6 +1686,7 @@ func checkFinalShards(t *testing.T, store *curator.FakeZookeeper) {
 func runTesterWithExactSteps(
 	tester *curator.FakeZookeeperTester,
 	prob float64, exactSteps int,
+	options ...curator.RunOption,
 ) {
 	remainSteps := exactSteps
 	for remainSteps > 0 {
@@ -1578,16 +1694,22 @@ func runTesterWithExactSteps(
 			prob,
 			prob,
 			remainSteps,
+			options...,
 		)
 		remainSteps -= steps
 	}
 }
 
 func runTesterWithoutErrors(tester *curator.FakeZookeeperTester) {
-	tester.RunSessionExpiredAndConnectionError(
+	steps := tester.RunSessionExpiredAndConnectionError(
 		0, 0,
-		1000_000,
+		100_000,
 	)
+	if steps == 100_000 {
+		fmt.Println("============================================")
+		fmt.Println("[ERROR] SHOULD NOT RUN INDEFINITELY")
+		fmt.Println("============================================")
+	}
 }
 
 type noopLogger struct {

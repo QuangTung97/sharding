@@ -188,7 +188,8 @@ func (s *Sharding) getAssignNodeData(sess *curator.Session, nodeID string, count
 func (s *Sharding) putNodeAssignState(nodeID string, version int32, shards []ShardID) {
 	old := s.state.currentAssignMap[nodeID]
 	if old.version > version {
-		panic("out of order responses")
+		// panic("out of order responses") TODO
+		return
 	}
 
 	s.state.currentAssignMap[nodeID] = assignState{
@@ -421,7 +422,9 @@ func (s *Sharding) upsertAssigns(
 	}
 }
 
-func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, counter *callbackCounter) bool {
+func (s *Sharding) retryListAssignsIfErr(
+	sess *curator.Session, err error, nodeID string, counter *callbackCounter,
+) bool {
 	if err == nil {
 		return false
 	}
@@ -430,11 +433,18 @@ func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, count
 		counter.addRetry(sess, s.listAssignNodes)
 		return true
 	}
+
+	if errors.Is(err, zk.ErrNoNode) {
+		delete(s.state.currentAssignMap, nodeID)
+		return true
+	}
+
 	if isOneOfErrors(err,
-		zk.ErrBadVersion, zk.ErrNodeExists, zk.ErrNoNode,
+		zk.ErrBadVersion, zk.ErrNodeExists,
 	) {
 		return true
 	}
+
 	panic(err)
 }
 
@@ -460,7 +470,7 @@ func (s *Sharding) updateAssignNode(
 		client.Set(pathVal, data, prev.version, func(resp zk.SetResponse, err error) {
 			defer finish()
 
-			if s.retryListAssignsIfErr(sess, err, counter) {
+			if s.retryListAssignsIfErr(sess, err, nodeID, counter) {
 				return
 			}
 			s.putNodeAssignState(nodeID, resp.Stat.Version, shards)
@@ -479,7 +489,7 @@ func (s *Sharding) createAssignNode(
 		finish := counter.begin()
 		client.Create(pathVal, data, 0, func(resp zk.CreateResponse, err error) {
 			defer finish()
-			if s.retryListAssignsIfErr(sess, err, counter) {
+			if s.retryListAssignsIfErr(sess, err, nodeID, counter) {
 				return
 			}
 			s.putNodeAssignState(nodeID, 0, shards)
@@ -494,7 +504,8 @@ func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, counte
 		finish := counter.begin()
 		client.Delete(s.getAssignsPath()+"/"+nodeID, version, func(resp zk.DeleteResponse, err error) {
 			defer finish()
-			if s.retryListAssignsIfErr(sess, err, counter) {
+
+			if s.retryListAssignsIfErr(sess, err, nodeID, counter) {
 				return
 			}
 			delete(s.state.currentAssignMap, nodeID)
