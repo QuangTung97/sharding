@@ -1700,6 +1700,7 @@ func runTesterWithoutErrors(tester *curator.FakeZookeeperTester) {
 		fmt.Println("============================================")
 		fmt.Println("[ERROR] SHOULD NOT RUN INDEFINITELY")
 		fmt.Println("============================================")
+		panic("should not run indefinitely")
 	}
 }
 
