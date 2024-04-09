@@ -27,6 +27,27 @@ type ChangeEvent struct {
 // ObserverFunc is the callback function of observer
 type ObserverFunc func(event ChangeEvent)
 
+// Observer is for standalone observer, without participating on sharding allocation
+type Observer struct {
+	core *observerCore
+}
+
+// NewObserver creates an Observer
+func NewObserver(parentPath string, numShards ShardID, observerFunc ObserverFunc) *Observer {
+	return &Observer{
+		core: newObserverCore(parentPath, numShards, observerFunc),
+	}
+}
+
+// OnStart should be used as the argument of curator.New
+func (o *Observer) OnStart(sess *curator.Session) {
+	o.core.onStart(sess)
+}
+
+// ========================================
+// Observer Core Logic
+// ========================================
+
 type observerNodeData struct {
 	data   nodeData
 	shards []ShardID

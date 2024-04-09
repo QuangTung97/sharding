@@ -38,11 +38,6 @@ type assignState struct {
 }
 
 type sessionState struct {
-	lockCreated    bool
-	nodesCreated   bool
-	assignsCreated bool
-	leaderStarted  bool
-
 	nodes            []string
 	currentAssignMap map[string]assignState
 
@@ -66,6 +61,13 @@ func New(
 	numShards ShardID, nodeAddr string,
 	options ...Option,
 ) *Sharding {
+	if len(nodeID) == 0 {
+		panic("Invalid node id") // TODO Testing
+	}
+	if len(nodeAddr) == 0 {
+		panic("Invalid node address") // TODO Testing
+	}
+
 	s := &Sharding{
 		parentPath: parentPath,
 		nodeID:     nodeID,
@@ -79,6 +81,8 @@ func New(
 		fn(s)
 	}
 
+	controller := newContainerNodeController(parentPath, nodeID, nodeAddr)
+
 	lock := concurrency.NewLock(s.getLockPath(), nodeID)
 
 	startLeader := func(sess *curator.Session, next func(sess *curator.Session)) {
@@ -89,7 +93,7 @@ func New(
 	}
 
 	s.cur = curator.NewChain(
-		s.createContainerNodes,
+		controller.onStart,
 		startLeader,
 		s.onLeaderCallback,
 	)
@@ -109,52 +113,12 @@ func (s *Sharding) getAssignsPath() string {
 	return s.parentPath + assignZNodeName
 }
 
-func (s *Sharding) createContainerNodes(sess *curator.Session, next func(sess *curator.Session)) {
+func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.Session)) {
+	s.logger.Infof("Leader Started")
+
 	s.state = &sessionState{
 		currentAssignMap: map[string]assignState{},
 	}
-	s.lockBegin = next
-	s.createInitNodes(sess)
-}
-
-func (s *Sharding) createCompleted(sess *curator.Session) {
-	if s.state.lockCreated && s.state.nodesCreated && s.state.assignsCreated {
-		if s.state.leaderStarted {
-			panic("Leader already started")
-		}
-		s.state.leaderStarted = true
-		s.lockBegin(sess)
-	}
-}
-
-func (s *Sharding) createInitNodes(sess *curator.Session) {
-	sessMustCreatePersistence(sess, s.getLockPath(), func(resp zk.CreateResponse) {
-		s.state.lockCreated = true
-		s.createCompleted(sess)
-	})
-
-	sessMustCreatePersistence(sess, s.getNodesPath(), func(resp zk.CreateResponse) {
-		s.createEphemeralNode(sess)
-	})
-
-	sessMustCreatePersistence(sess, s.getAssignsPath(), func(resp zk.CreateResponse) {
-		s.state.assignsCreated = true
-		s.createCompleted(sess)
-	})
-}
-
-func (s *Sharding) createEphemeralNode(sess *curator.Session) {
-	pathVal := s.getNodesPath() + "/" + s.nodeID
-	data := nodeData{Address: s.nodeAddr}.marshalJSON()
-
-	sessMustCreateWithData(sess, pathVal, zk.FlagEphemeral, data, func(resp zk.CreateResponse) {
-		s.state.nodesCreated = true
-		s.createCompleted(sess)
-	})
-}
-
-func (s *Sharding) onLeaderCallback(sess *curator.Session, _ func(sess *curator.Session)) {
-	s.logger.Infof("Leader Started")
 	s.listAssignNodes(sess)
 	s.listActiveNodes(sess)
 }
@@ -512,4 +476,83 @@ func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, counte
 // GetCurator is used for input of the curator.Client.Start() method
 func (s *Sharding) GetCurator() *curator.Curator {
 	return s.cur
+}
+
+// ========================================
+// Logic for Creating Container Nodes
+// ========================================
+type containerNodeController struct {
+	state      *nodeControllerState
+	parentPath string
+	next       func(sess *curator.Session)
+
+	nodeID   string
+	nodeAddr string
+}
+
+type nodeControllerState struct {
+	lockCreated    bool
+	nodesCreated   bool
+	assignsCreated bool
+}
+
+func newContainerNodeController(
+	parent string,
+	nodeID string, nodeAddr string,
+) *containerNodeController {
+	return &containerNodeController{
+		parentPath: parent,
+		nodeID:     nodeID,
+		nodeAddr:   nodeAddr,
+	}
+}
+
+func (c *containerNodeController) onStart(sess *curator.Session, next func(sess *curator.Session)) {
+	c.next = next
+	c.state = &nodeControllerState{}
+	c.createInitNodes(sess)
+}
+
+func (c *containerNodeController) createInitNodes(sess *curator.Session) {
+	sessMustCreatePersistence(sess, c.getLockPath(), func(resp zk.CreateResponse) {
+		c.state.lockCreated = true
+		c.createCompleted(sess)
+	})
+
+	sessMustCreatePersistence(sess, c.getNodesPath(), func(resp zk.CreateResponse) {
+		c.createEphemeralNode(sess)
+	})
+
+	sessMustCreatePersistence(sess, c.getAssignsPath(), func(resp zk.CreateResponse) {
+		c.state.assignsCreated = true
+		c.createCompleted(sess)
+	})
+}
+
+func (c *containerNodeController) createEphemeralNode(sess *curator.Session) {
+	pathVal := c.getNodesPath() + "/" + c.nodeID
+	data := nodeData{Address: c.nodeAddr}.marshalJSON()
+
+	sessMustCreateWithData(sess, pathVal, zk.FlagEphemeral, data, func(resp zk.CreateResponse) {
+		c.state.nodesCreated = true
+		c.createCompleted(sess)
+	})
+}
+
+func (c *containerNodeController) createCompleted(sess *curator.Session) {
+	if c.state.lockCreated && c.state.nodesCreated && c.state.assignsCreated {
+		c.next(sess)
+	}
+}
+
+func (c *containerNodeController) getLockPath() string {
+	return c.parentPath + lockZNodeName
+}
+
+func (c *containerNodeController) getNodesPath() string {
+	return c.parentPath + nodeZNodeName
+}
+
+func (c *containerNodeController) getAssignsPath() string {
+	return c.parentPath + assignZNodeName
 }
