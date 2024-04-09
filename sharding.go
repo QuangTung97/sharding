@@ -234,6 +234,8 @@ func (c *callbackCounter) addRetry(sess *curator.Session, fn func(sess *curator.
 
 func (s *Sharding) listAssignNodes(sess *curator.Session) {
 	sessMustChildren(sess, s.getAssignsPath(), func(resp zk.ChildrenResponse) {
+		s.state.currentAssignMap = map[string]assignState{}
+
 		counter := newCallbackCounter(func() {
 			s.state.getAssignNodesCompleted = true
 			s.startHandleNodeChanges(sess)
@@ -421,7 +423,9 @@ func (s *Sharding) upsertAssigns(
 	}
 }
 
-func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, counter *callbackCounter) bool {
+func (s *Sharding) retryListAssignsIfErr(
+	sess *curator.Session, err error, counter *callbackCounter,
+) bool {
 	if err == nil {
 		return false
 	}
@@ -430,11 +434,13 @@ func (s *Sharding) retryListAssignsIfErr(sess *curator.Session, err error, count
 		counter.addRetry(sess, s.listAssignNodes)
 		return true
 	}
+
 	if isOneOfErrors(err,
 		zk.ErrBadVersion, zk.ErrNodeExists, zk.ErrNoNode,
 	) {
 		return true
 	}
+
 	panic(err)
 }
 
@@ -494,6 +500,7 @@ func (s *Sharding) deleteAssignNode(sess *curator.Session, nodeID string, counte
 		finish := counter.begin()
 		client.Delete(s.getAssignsPath()+"/"+nodeID, version, func(resp zk.DeleteResponse, err error) {
 			defer finish()
+
 			if s.retryListAssignsIfErr(sess, err, counter) {
 				return
 			}
