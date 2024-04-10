@@ -305,7 +305,6 @@ func nodeEqual(a, b Node) bool {
 	return slices.Equal(a.Shards, b.Shards)
 }
 
-//revive:disable-next-line:cognitive-complexity
 func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
 	sess.GetClient().GetW(c.parent+assignZNodeName+"/"+nodeID, func(resp zk.GetResponse, err error) {
 		if err != nil {
