@@ -18,7 +18,27 @@ func WatchChange(event sharding.ChangeEvent) {
 	}
 }
 
+func observer() {
+	obs := sharding.NewObserver("/sm", 8, WatchChange)
+
+	factory := curator.NewClientFactory(
+		[]string{"localhost"}, "user01", "password01",
+	)
+	defer factory.Close()
+
+	factory.Start(obs.GetCurator())
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt)
+	<-ch
+}
+
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "observer" {
+		observer()
+		return
+	}
+
 	nodeID := sharding.NewNodeID()
 	fmt.Println("NODE_ID:", nodeID)
 
