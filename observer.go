@@ -90,45 +90,41 @@ func (c *observerCore) onStart(sess *curator.Session) {
 }
 
 func (c *observerCore) listNodes(sess *curator.Session) {
-	sess.Run(func(client curator.Client) {
-		client.ChildrenW(c.parent+nodeZNodeName,
-			func(resp zk.ChildrenResponse, err error) {
-				if err != nil {
-					if errors.Is(err, zk.ErrConnectionClosed) {
-						sess.AddRetry(c.listNodes)
-						return
-					}
-					panic(err)
+	sess.GetClient().ChildrenW(c.parent+nodeZNodeName,
+		func(resp zk.ChildrenResponse, err error) {
+			if err != nil {
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(c.listNodes)
+					return
 				}
-				c.handleNodesChildren(sess, resp)
-			},
-			func(ev zk.Event) {
-				if ev.Type == zk.EventNodeChildrenChanged {
-					c.listNodes(sess)
-				}
-			},
-		)
-	})
+				panic(err)
+			}
+			c.handleNodesChildren(sess, resp)
+		},
+		func(ev zk.Event) {
+			if ev.Type == zk.EventNodeChildrenChanged {
+				c.listNodes(sess)
+			}
+		},
+	)
 }
 
 func (c *observerCore) listAssigns(sess *curator.Session) {
-	sess.Run(func(client curator.Client) {
-		client.ChildrenW(c.parent+assignZNodeName,
-			func(resp zk.ChildrenResponse, err error) {
-				if err != nil {
-					if errors.Is(err, zk.ErrConnectionClosed) {
-						sess.AddRetry(c.listAssigns)
-						return
-					}
-					panic(err)
+	sess.GetClient().ChildrenW(c.parent+assignZNodeName,
+		func(resp zk.ChildrenResponse, err error) {
+			if err != nil {
+				if errors.Is(err, zk.ErrConnectionClosed) {
+					sess.AddRetry(c.listAssigns)
+					return
 				}
-				c.handleAssignsChildren(sess, resp)
-			},
-			func(ev zk.Event) {
-				c.listAssigns(sess)
-			},
-		)
-	})
+				panic(err)
+			}
+			c.handleAssignsChildren(sess, resp)
+		},
+		func(ev zk.Event) {
+			c.listAssigns(sess)
+		},
+	)
 }
 
 func (c *observerCore) getNodeIDsNotInList(l []string) []string {
@@ -164,22 +160,20 @@ func (c *observerCore) handleNodesChildren(sess *curator.Session, resp zk.Childr
 }
 
 func (c *observerCore) getNodeData(sess *curator.Session, node string) {
-	sess.Run(func(client curator.Client) {
-		client.Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
-			if err != nil {
-				if errors.Is(err, zk.ErrConnectionClosed) {
-					sess.AddRetry(func(sess *curator.Session) {
-						c.getNodeData(sess, node)
-					})
-					return
-				}
-				if errors.Is(err, zk.ErrNoNode) {
-					return
-				}
-				panic(err)
+	sess.GetClient().Get(c.parent+nodeZNodeName+"/"+node, func(resp zk.GetResponse, err error) {
+		if err != nil {
+			if errors.Is(err, zk.ErrConnectionClosed) {
+				sess.AddRetry(func(sess *curator.Session) {
+					c.getNodeData(sess, node)
+				})
+				return
 			}
-			c.handleNodeData(node, resp)
-		})
+			if errors.Is(err, zk.ErrNoNode) {
+				return
+			}
+			panic(err)
+		}
+		c.handleNodeData(node, resp)
 	})
 }
 
@@ -313,29 +307,27 @@ func nodeEqual(a, b Node) bool {
 
 //revive:disable-next-line:cognitive-complexity
 func (c *observerCore) getAssignNode(sess *curator.Session, nodeID string) {
-	sess.Run(func(client curator.Client) {
-		client.GetW(c.parent+assignZNodeName+"/"+nodeID, func(resp zk.GetResponse, err error) {
-			if err != nil {
-				if errors.Is(err, zk.ErrConnectionClosed) {
-					sess.AddRetry(func(sess *curator.Session) {
-						c.getAssignNode(sess, nodeID)
-					})
-					return
-				}
-				if errors.Is(err, zk.ErrNoNode) {
-					return
-				}
-				panic(err)
+	sess.GetClient().GetW(c.parent+assignZNodeName+"/"+nodeID, func(resp zk.GetResponse, err error) {
+		if err != nil {
+			if errors.Is(err, zk.ErrConnectionClosed) {
+				sess.AddRetry(func(sess *curator.Session) {
+					c.getAssignNode(sess, nodeID)
+				})
+				return
 			}
-			c.handleGetAssignData(nodeID, resp)
-		}, func(ev zk.Event) {
-			if ev.Type == zk.EventNodeDataChanged {
-				c.getAssignNode(sess, nodeID)
-			} else if ev.Type == zk.EventNodeDeleted {
-				n := c.getNode(nodeID)
-				n.mzxid = 0
+			if errors.Is(err, zk.ErrNoNode) {
+				return
 			}
-		})
+			panic(err)
+		}
+		c.handleGetAssignData(nodeID, resp)
+	}, func(ev zk.Event) {
+		if ev.Type == zk.EventNodeDataChanged {
+			c.getAssignNode(sess, nodeID)
+		} else if ev.Type == zk.EventNodeDeleted {
+			n := c.getNode(nodeID)
+			n.mzxid = 0
+		}
 	})
 }
 

@@ -12,8 +12,8 @@ func sessMustCreateWithData(
 	sess *curator.Session, path string, flags int32, data []byte, callback func(resp zk.CreateResponse),
 ) {
 	var loop func(sess *curator.Session)
-	clientCall := func(client curator.Client) {
-		client.Create(path, data, flags, func(resp zk.CreateResponse, err error) {
+	loop = func(sess *curator.Session) {
+		sess.GetClient().Create(path, data, flags, func(resp zk.CreateResponse, err error) {
 			if err == nil || errors.Is(err, zk.ErrNodeExists) {
 				callback(resp)
 				return
@@ -24,9 +24,6 @@ func sessMustCreateWithData(
 			}
 			log.Panicf("Create node with error: %v, path: %s", err, path)
 		})
-	}
-	loop = func(sess *curator.Session) {
-		sess.Run(clientCall)
 	}
 	loop(sess)
 }
@@ -39,8 +36,8 @@ func sessMustCreatePersistence(
 
 func sessMustChildren(sess *curator.Session, path string, callback func(resp zk.ChildrenResponse)) {
 	var loop func(sess *curator.Session)
-	clientCall := func(client curator.Client) {
-		client.Children(path, func(resp zk.ChildrenResponse, err error) {
+	loop = func(sess *curator.Session) {
+		sess.GetClient().Children(path, func(resp zk.ChildrenResponse, err error) {
 			if err != nil {
 				if errors.Is(err, zk.ErrConnectionClosed) {
 					sess.AddRetry(loop)
@@ -50,9 +47,6 @@ func sessMustChildren(sess *curator.Session, path string, callback func(resp zk.
 			}
 			callback(resp)
 		})
-	}
-	loop = func(sess *curator.Session) {
-		sess.Run(clientCall)
 	}
 	loop(sess)
 }
