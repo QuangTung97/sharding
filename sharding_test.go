@@ -35,12 +35,10 @@ func initStore() *curator.FakeZookeeper {
 
 	c := curator.NewFakeClientFactory(store, initClient)
 	c.Start(curator.New(func(sess *curator.Session) {
-		sess.Run(func(client curator.Client) {
-			client.Create(parentPath, nil, 0, func(resp zk.CreateResponse, err error) {
-				if err != nil {
-					panic(err)
-				}
-			})
+		sess.GetClient().Create(parentPath, nil, 0, func(resp zk.CreateResponse, err error) {
+			if err != nil {
+				panic(err)
+			}
 		})
 	}))
 

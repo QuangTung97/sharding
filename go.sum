@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.3.2 h1:o7IhLm0Msx3BaB+n3Ag7L8EVlByGnpq14C4YWiu/gL8=
 github.com/BurntSushi/toml v1.3.2/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
-github.com/QuangTung97/zk v0.1.1-0.20240409022755-b653f0166650 h1:EGGnxUjUriAKKtksph2mij7HUtPMjgDTZsBCsjx51QM=
-github.com/QuangTung97/zk v0.1.1-0.20240409022755-b653f0166650/go.mod h1:BkPBjjBf5Vj66J9Au4AaYLBQV8ep7ppZ0typcap63y8=
+github.com/QuangTung97/zk v0.1.1-0.20240410063201-0b639ad85c1a h1:GhSmo9upXiXIdm0+b/asCDLs/Vk7e3p+T7L4TKjxCBw=
+github.com/QuangTung97/zk v0.1.1-0.20240410063201-0b639ad85c1a/go.mod h1:BkPBjjBf5Vj66J9Au4AaYLBQV8ep7ppZ0typcap63y8=
 github.com/chavacava/garif v0.1.0 h1:2JHa3hbYf5D9dsgseMKAmc/MZ109otzgNFk5s87H9Pc=
 github.com/chavacava/garif v0.1.0/go.mod h1:XMyYCkEL58DF0oyW4qDjjnPWONs2HBqYKI+UIPD+Gww=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
